@@ -1,0 +1,57 @@
+<div class="button-container">
+    <h3>Quick Assign Research Project</h3>
+        	
+    {% for project, time_spent in sorted_projects if project not in ["PARTIALLY ASSIGNABLE", "NOT ASSIGNABLE"] %}
+        <button 
+            onclick="updateIssue('{{ project }}')"
+            style="background-color: blue; color: white;"
+        >
+            {{ project }} ({{ time_spent|round(2) }}h)
+        </button>
+    {% endfor %}
+
+        <button 
+            onclick="updateIssue('PARTIALLY ASSIGNABLE')"
+            style="background-color: yellow; color: black;"
+        >
+            PARTIALLY ASSIGNABLE
+        </button>
+        <button 
+            onclick="updateIssue('NOT ASSIGNABLE')"
+            style="background-color: red; color: white;"
+        >
+            NOT ASSIGNABLE
+        </button>
+    
+    {% for project in projects_without_time if project not in ["PARTIALLY ASSIGNABLE", "NOT ASSIGNABLE"] %}
+        <button 
+            onclick="updateIssue('{{ project }}')"
+            style="background-color: lightgray; color: black;"
+        >
+            {{ project }}
+        </button>
+    {% endfor %}
+</div>
+
+<script>
+    function updateIssue(researchProject) {
+        fetch('/update_issue', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                issue_key: "{{ issues[0].key }}",
+                research_project: researchProject,
+                chargeable: "REVIEW"
+            })
+        }).then(response => response.json()).then(data => {
+            if (data.next_issue) {
+                window.location.href = "/fetch_issue?issue_key=" + data.next_issue;  // ✅ Directly load the next issue
+            } else {
+                alert("Issue updated, but no more issues found.");
+            }
+        }).catch(error => {
+            alert("Error updating issue");
+        });
+    }
+</script>
+

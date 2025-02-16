@@ -1,0 +1,8 @@
+<div class="issue-container">
+    <h2>[{{ total_issues }}] {{ issues[0].key }} - {{ issues[0].name }} (Assignee: {{ issues[0].assignee_name }}, Time Spent: {{ issues[0].timespent }}h)</h2>
+
+    <div class="description-container">
+        <h3>Issue Description</h3>
+        <p>{{ issues[0].description or 'No description available' }}</p>
+    </div>
+</div>
