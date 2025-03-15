@@ -1,0 +1,20 @@
+# Virtuelle Umgebung
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Sensible Daten
+.env
+secret.key
+localhost.pem
+localhost.pfx
+localhost-key.pem
+
+# Logs & Temporäre Dateien
+*.log
+shared_volume/
+
+# macOS & Editor-spezifische Dateien
+.DS_Store
+.vscode/
