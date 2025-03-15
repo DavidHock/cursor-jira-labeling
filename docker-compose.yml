@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  jira_app:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./shared_volume:/shared
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - JIRA_INSTANCE=${JIRA_INSTANCE}
+    networks:
+      - jira_network
+networks:
+  jira_network:
+    driver: bridge

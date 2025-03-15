@@ -1,17 +1,34 @@
 from flask import Flask, render_template, request, redirect, url_for, session
 import logging
+import json
+import os
+from dotenv import load_dotenv
 from utils.issue_lookup import get_issue_hierarchy, get_recent_worklogs, search_issue_by_filter, generate_pie_chart
 import requests
 from datetime import timedelta
 
-app = Flask(__name__)
-app.secret_key = "ABC123!"  # Stelle sicher, dass dies konstant bleibt
-app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=1)  # 1 Stunde gültig
+log_file = "/shared/app.log"
+logging.basicConfig(level=logging.DEBUG, filename=log_file, filemode="a", format="%(asctime)s - %(message)s")
 
-logging.basicConfig(level=logging.DEBUG)
+session_file = "/shared/session_data.json"
+
+def save_session():
+    with open(session_file, "w") as f:
+        json.dump(dict(session), f)
+
+def load_session():
+    if os.path.exists(session_file):
+        with open(session_file, "r") as f:
+            session.update(json.load(f))
+
+app = Flask(__name__)
+load_dotenv()
+app.secret_key = os.environ.get("SECRET_KEY", "fallback-secret")
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=1)  # 1 Stunde gültig
 
 @app.route('/')
 def home():
+    load_session()
     return render_template('login.html')
 
 @app.route("/login", methods=["POST"])
@@ -19,7 +36,8 @@ def login():
     session["jira_email"] = request.form["email"]
     session["jira_api_token"] = request.form["api_token"]
     session["jira_instance"] = "infosim.atlassian.net"
-    
+    save_session()
+
     logging.debug("🔹 Session nach Login gesetzt:", session)  # Debug-Ausgabe
     
     return redirect(url_for("search_issue"))
@@ -96,8 +114,6 @@ def update_issue():
     research_project = data.get('research_project')
     chargeable = data.get('chargeable')
     
-    
-
     if not issue_key or not research_project:
         return {"message": "Missing required fields."}, 400
 
@@ -120,6 +136,8 @@ def update_issue():
         next_issue_key,total_issues = search_issue_by_filter(session.get("filter_id", "10456"), session["jira_email"], session["jira_api_token"], session["jira_instance"])
         
         if next_issue_key:
+            with open("/shared/updated_issues.log", "a") as f:
+                f.write(f"Updated Issue: {issue_key}\n")
             return {"message": "Issue updated successfully.", "next_issue": next_issue_key,"total_issues": total_issues}, 200
         else:
             return {"message": "Issue updated, but no more issues found.", "next_issue": None}, 200
