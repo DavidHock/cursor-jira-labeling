@@ -135,6 +135,18 @@ def update_issue():
     if response.status_code == 204:
         next_issue_key,total_issues = search_issue_by_filter(session.get("filter_id", "10456"), session["jira_email"], session["jira_api_token"], session["jira_instance"])
         
+                # Add current user as watcher
+        watcher_url = f"https://{session['jira_instance']}/rest/api/3/issue/{issue_key}/watchers"
+        watcher_response = requests.post(
+            watcher_url,
+            data=json.dumps(session['jira_email']),  # email als JSON-String
+            auth=auth,
+            headers={"Content-Type": "application/json"}
+        )
+
+        if watcher_response.status_code not in [204, 400]:  # 400 if user is already a watcher
+            logging.warning(f"Failed to add watcher: {watcher_response.status_code} - {watcher_response.text}")
+
         if next_issue_key:
             with open("/shared/updated_issues.log", "a") as f:
                 f.write(f"Updated Issue: {issue_key}\n")
