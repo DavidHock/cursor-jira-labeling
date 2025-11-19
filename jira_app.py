@@ -101,7 +101,7 @@ def fetch_issue():
         worklog_issues=worklog_issues,
         sorted_projects=sorted_projects,
         projects_without_time=[
-            p for p in ["6G-NETFAB", "GREENFIELD", "INTENSE", "KOSINU5", "N-DOLLI", "QuINSiDa", "QuNET+ML", "SASPIT", "SUSTAINET", "ZiNsVis", "PARTIALLY ASSIGNABLE", "NOT ASSIGNABLE"]
+            p for p in ["6G-NETFAB", "GREENFIELD", "INTENSE", "N-DOLLI", "QuINSiDa", "SASPIT", "SUSTAINET", "SHINKA", "PARTIALLY ASSIGNABLE", "NOT ASSIGNABLE"]
             if p not in worklog_data
         ],
         pie_chart=pie_chart  # ✅ Make sure pie chart is passed
@@ -122,7 +122,7 @@ def update_issue():
     update_data = {
         "fields": {
             "customfield_10097": {"value": research_project},
-            "customfield_10098": chargeable
+            "customfield_10384": {"id": chargeable}
         }
     }
 
@@ -154,6 +154,13 @@ def update_issue():
         else:
             return {"message": "Issue updated, but no more issues found.", "next_issue": None}, 200
 
+    # 🔴 HIER NEU: Immer etwas zurückgeben, auch bei Fehlern!
+    else:
+        logging.error(f"Failed to update issue {issue_key}: {response.status_code} - {response.text}")
+        return {
+            "message": "Failed to update issue.",
+            "jira_response": response.text
+        }, response.status_code
 
 if __name__ == '__main__':
     app.run(

@@ -41,7 +41,7 @@
             body: JSON.stringify({
                 issue_key: "{{ issues[0].key }}",
                 research_project: researchProject,
-                chargeable: "REVIEW"
+                chargeable: "10396"
             })
         }).then(response => response.json()).then(data => {
             if (data.next_issue) {
