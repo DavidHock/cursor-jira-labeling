@@ -14,7 +14,7 @@ import { IssueResponse, Issue } from '../../models/issue.model';
       <div class="header">
         <h1>Jira Issue Labeling</h1>
         <div class="progress-info">
-          <span>Issue {{ currentIssueIndex }} of {{ totalIssues }}</span>
+          <span>{{ totalIssues }} remaining {{ totalIssues === 1 ? 'issue' : 'issues' }} to tag</span>
         </div>
       </div>
 
@@ -445,7 +445,6 @@ import { IssueResponse, Issue } from '../../models/issue.model';
 export class IssueViewComponent implements OnInit {
   issueData: IssueResponse | null = null;
   currentIssue: Issue | null = null;
-  currentIssueIndex = 1;
   totalIssues = 1;
   loading = true;
   error = '';
@@ -511,9 +510,6 @@ export class IssueViewComponent implements OnInit {
       next: (data) => {
         this.issueData = data;
         this.currentIssue = data.issues[0];
-        // Calculate current issue index correctly
-        // When we navigate to next issue, totalIssues decreases
-        this.currentIssueIndex = this.totalIssues;
         this.selectedProject = this.currentIssue?.research_project || '';
         this.loading = false;
       },
