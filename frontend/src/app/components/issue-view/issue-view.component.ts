@@ -35,69 +35,63 @@ import { IssueResponse, Issue } from '../../models/issue.model';
             <p>{{ currentIssue?.description || 'No description available' }}</p>
           </div>
 
-          <form (ngSubmit)="onUpdate()" #updateForm="ngForm">
-            <div class="form-group">
-              <label for="researchProject">Research Project *</label>
-              <select
-                id="researchProject"
-                name="researchProject"
-                [(ngModel)]="selectedProject"
-                required
-              >
-                <option value="">Select a project</option>
-                <option *ngFor="let project of allProjects" [value]="project">
-                  {{ project }}
-                </option>
-              </select>
+          <div class="related-issues" *ngIf="issueData.issues.length > 1">
+            <h3>Related Issues</h3>
+            <div class="related-issues-list">
+              <div *ngFor="let issue of issueData.issues" class="related-issue-item" [class.main-issue]="issue.link_type === 'Self'">
+                <span class="related-issue-key">{{ issue.key }}</span>
+                <span class="related-issue-link-type">{{ issue.link_type }}</span>
+                <span class="related-issue-name">{{ issue.name }}</span>
+                <span class="related-issue-project">{{ issue.research_project || 'N/A' }}</span>
+              </div>
             </div>
+          </div>
 
-            <div *ngIf="updateError" class="error">{{ updateError }}</div>
-            <div *ngIf="updateSuccess" class="success">{{ updateSuccess }}</div>
-
-            <div class="button-group">
+          <div class="form-group">
+            <label>Research Project *</label>
+            <div class="project-buttons">
               <button
-                type="submit"
-                class="btn btn-primary"
-                [disabled]="updating || !updateForm.valid"
+                *ngFor="let project of allProjects"
+                type="button"
+                class="project-btn"
+                [class.selected]="selectedProject === project"
+                [class.not-assignable]="project === 'NOT ASSIGNABLE'"
+                [class.partially-assignable]="project === 'PARTIALLY ASSIGNABLE'"
+                [class.has-hours]="hasHoursForProject(project)"
+                [class.no-hours]="!hasHoursForProject(project) && project !== 'NOT ASSIGNABLE' && project !== 'PARTIALLY ASSIGNABLE'"
+                [disabled]="updating"
+                (click)="onProjectSelect(project)"
               >
-                <span *ngIf="!updating">Update & Next</span>
-                <span *ngIf="updating">Updating...</span>
+                <span *ngIf="!updating || selectedProject !== project">{{ project }}</span>
+                <span *ngIf="updating && selectedProject === project">Updating...</span>
               </button>
             </div>
-          </form>
+          </div>
+
+          <div *ngIf="updateError" class="error">{{ updateError }}</div>
+          <div *ngIf="updateSuccess" class="success">{{ updateSuccess }}</div>
         </div>
 
         <div class="stats-container">
           <div class="card stats-card">
-            <h3>Recent Worklogs (Last 14 Days)</h3>
-            <div *ngIf="issueData.sorted_projects.length > 0" class="projects-list">
-              <div *ngFor="let project of issueData.sorted_projects" class="project-item">
-                <span class="project-name">{{ project.project }}</span>
-                <span class="project-hours">{{ project.hours }}h</span>
-              </div>
-            </div>
-            <div *ngIf="issueData.projects_without_time.length > 0" class="projects-without-time">
-              <h4>Projects without time:</h4>
-              <div class="project-tags">
-                <span *ngFor="let project of issueData.projects_without_time" class="tag">
-                  {{ project }}
-                </span>
-              </div>
-            </div>
+            <h3>Time Distribution (Last 14 Days)</h3>
             <div *ngIf="issueData.pie_chart" class="chart-container">
               <img [src]="'data:image/png;base64,' + issueData.pie_chart" alt="Time Distribution Chart" />
+            </div>
+            <div *ngIf="!issueData.pie_chart && issueData.sorted_projects.length === 0" class="no-data">
+              <p>No worklog data available for the last 14 days.</p>
             </div>
           </div>
 
           <div class="card worklog-card" *ngIf="issueData.worklog_issues.length > 0">
-            <h3>Worklog Issues</h3>
+            <h3>Recent Worklog Issues</h3>
             <div class="worklog-list">
               <div *ngFor="let worklog of issueData.worklog_issues" class="worklog-item">
                 <div class="worklog-key">{{ worklog.key }}</div>
                 <div class="worklog-name">{{ worklog.name }}</div>
                 <div class="worklog-meta">
-                  <span>{{ worklog.research_project }}</span>
-                  <span>{{ worklog.time_spent_hours }}h</span>
+                  <span class="worklog-project">{{ worklog.research_project }}</span>
+                  <span class="worklog-hours">{{ worklog.time_spent_hours }}h</span>
                 </div>
               </div>
             </div>
@@ -176,8 +170,148 @@ import { IssueResponse, Issue } from '../../models/issue.model';
         }
       }
 
+      .related-issues {
+        margin-bottom: 24px;
+        padding: 16px;
+        background: #f0f4ff;
+        border-radius: 8px;
+        border-left: 4px solid #667eea;
+
+        h3 {
+          margin-bottom: 12px;
+          color: #667eea;
+          font-size: 16px;
+        }
+
+        .related-issues-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .related-issue-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 8px 12px;
+          background: white;
+          border-radius: 6px;
+          font-size: 14px;
+
+          &.main-issue {
+            background: #e3f2fd;
+            font-weight: 600;
+          }
+
+          .related-issue-key {
+            font-weight: 600;
+            color: #667eea;
+            min-width: 80px;
+          }
+
+          .related-issue-link-type {
+            padding: 4px 8px;
+            background: #f5f5f5;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #666;
+            min-width: 100px;
+          }
+
+          .related-issue-name {
+            flex: 1;
+            color: #333;
+          }
+
+          .related-issue-project {
+            padding: 4px 8px;
+            background: #667eea;
+            color: white;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            min-width: 100px;
+            text-align: center;
+          }
+        }
+      }
+
       .button-group {
         margin-top: 24px;
+      }
+
+      .project-buttons {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .project-btn {
+        padding: 12px 16px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        background: #f5f5f5;
+        color: #333;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-align: center;
+
+        &:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        &.selected {
+          border-width: 3px;
+          box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
+        }
+
+        &.not-assignable {
+          background: #fee;
+          border-color: #f44;
+          color: #c33;
+
+          &.selected {
+            background: #fcc;
+            border-color: #f00;
+          }
+        }
+
+        &.partially-assignable {
+          background: #ffd;
+          border-color: #ff0;
+          color: #990;
+
+          &.selected {
+            background: #ffc;
+            border-color: #ff0;
+          }
+        }
+
+        &.has-hours {
+          background: #e3f2fd;
+          border-color: #667eea;
+          color: #1976d2;
+
+          &.selected {
+            background: #bbdefb;
+            border-color: #2196f3;
+          }
+        }
+
+        &.no-hours {
+          background: #f5f5f5;
+          border-color: #bdbdbd;
+          color: #757575;
+
+          &.selected {
+            background: #e0e0e0;
+            border-color: #9e9e9e;
+          }
+        }
       }
     }
 
@@ -243,6 +377,18 @@ import { IssueResponse, Issue } from '../../models/issue.model';
         img {
           max-width: 100%;
           border-radius: 8px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+      }
+
+      .no-data {
+        text-align: center;
+        padding: 40px 20px;
+        color: #999;
+
+        p {
+          margin: 0;
+          font-style: italic;
         }
       }
     }
@@ -338,7 +484,9 @@ export class IssueViewComponent implements OnInit {
       next: (data) => {
         this.issueData = data;
         this.currentIssue = data.issues[0];
-        this.currentIssueIndex = this.totalIssues - (this.totalIssues - 1);
+        // Calculate current issue index correctly
+        // When we navigate to next issue, totalIssues decreases
+        this.currentIssueIndex = this.totalIssues;
         this.selectedProject = this.currentIssue?.research_project || '';
         this.loading = false;
       },
@@ -349,8 +497,43 @@ export class IssueViewComponent implements OnInit {
     });
   }
 
-  onUpdate() {
-    if (!this.currentIssue || !this.selectedProject) {
+  hasHoursForProject(project: string): boolean {
+    if (!this.issueData) {
+      return false;
+    }
+    
+    // Check if project has hours in worklogs
+    if (this.issueData.sorted_projects) {
+      if (this.issueData.sorted_projects.some(p => p.project === project)) {
+        return true;
+      }
+    }
+    
+    // Check if any related issue has this project assigned
+    if (this.issueData.issues) {
+      return this.issueData.issues.some(issue => issue.research_project === project);
+    }
+    
+    return false;
+  }
+
+  onProjectSelect(project: string) {
+    if (this.updating) {
+      return; // Prevent multiple clicks while updating
+    }
+    
+    this.selectedProject = project;
+    this.updateError = '';
+    this.updateSuccess = '';
+    
+    // Immediately submit the update
+    this.onUpdate(project);
+  }
+
+  onUpdate(project?: string) {
+    const selectedProject = project || this.selectedProject;
+    
+    if (!this.currentIssue || !selectedProject) {
       this.updateError = 'Please select a research project';
       return;
     }
@@ -362,7 +545,7 @@ export class IssueViewComponent implements OnInit {
     // Chargeable ID is always set to fixed value in background
     this.apiService.updateIssue(
       this.currentIssue.key,
-      this.selectedProject,
+      selectedProject,
       this.CHARGEABLE_ID
     ).subscribe({
       next: (response) => {

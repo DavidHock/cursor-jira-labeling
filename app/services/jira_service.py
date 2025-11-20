@@ -57,7 +57,7 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
     jql_query = f"worklogAuthor = {assignee_id} AND worklogDate >= -14d"
     url = (
         f"https://{jira_instance}/rest/api/3/search?"
-        f"jql={jql_query}&fields=summary,worklog,{Config.CUSTOM_FIELD_RESEARCH_PROJECT}"
+        f"jql={jql_query}&expand=worklog&fields=summary,worklog,{Config.CUSTOM_FIELD_RESEARCH_PROJECT}"
     )
     
     auth = HTTPBasicAuth(email, api_token)
@@ -71,6 +71,7 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
         
         if response.status_code == 200:
             issues = response.json().get("issues", [])
+            logger.debug(f"Found {len(issues)} issues with worklogs")
             
             for issue in issues:
                 issue_key = issue.get("key", "Unknown Issue")
@@ -81,21 +82,45 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
                     else str(project_data)
                 )
                 
-                worklogs = issue.get("fields", {}).get("worklog", {}).get("worklogs", [])
-                total_time_spent = sum(
-                    wl.get("timeSpentSeconds", 0) / 3600 for wl in worklogs
-                )
+                # Fetch worklogs separately for each issue as search API doesn't return full worklog data
+                total_time_spent = 0
+                try:
+                    worklog_url = f"https://{jira_instance}/rest/api/3/issue/{issue_key}/worklog"
+                    worklog_response = requests.get(worklog_url, headers=headers, auth=auth, timeout=30)
+                    if worklog_response.status_code == 200:
+                        worklog_data_full = worklog_response.json()
+                        all_worklogs = worklog_data_full.get("worklogs", [])
+                        
+                        # Filter worklogs from last 14 days and by the assignee
+                        cutoff_date = datetime.now() - timedelta(days=14)
+                        
+                        for wl in all_worklogs:
+                            # Check if worklog is from the assignee and within 14 days
+                            wl_author_id = wl.get("author", {}).get("accountId", "")
+                            wl_started = wl.get("started", "")
+                            
+                            if wl_author_id == assignee_id and wl_started:
+                                try:
+                                    wl_date = datetime.fromisoformat(wl_started.replace("Z", "+00:00"))
+                                    if wl_date >= cutoff_date:
+                                        total_time_spent += wl.get("timeSpentSeconds", 0) / 3600
+                                except:
+                                    # If date parsing fails, include it anyway
+                                    total_time_spent += wl.get("timeSpentSeconds", 0) / 3600
+                except Exception as e:
+                    logger.warning(f"Failed to fetch worklogs for {issue_key}: {e}")
                 
-                worklog_data[project] = worklog_data.get(project, 0) + total_time_spent
-                
-                worklog_issues.append({
-                    "key": issue_key,
-                    "name": issue.get("fields", {}).get("summary", "No Title"),
-                    "research_project": project,
-                    "time_spent_hours": round(total_time_spent, 2)
-                })
+                if total_time_spent > 0:
+                    worklog_data[project] = worklog_data.get(project, 0) + total_time_spent
+                    
+                    worklog_issues.append({
+                        "key": issue_key,
+                        "name": issue.get("fields", {}).get("summary", "No Title"),
+                        "research_project": project,
+                        "time_spent_hours": round(total_time_spent, 2)
+                    })
             
-            logger.debug(f"Worklogs Retrieved: {worklog_data}")
+            logger.debug(f"Worklogs Retrieved: {worklog_data}, Total issues: {len(worklog_issues)}")
         else:
             logger.error(
                 f"Failed to fetch worklogs, Status Code: {response.status_code}, "
@@ -290,12 +315,34 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
         )
         return None, 0
     
-    search_url = f"https://{jira_instance}/rest/api/3/search/jql"
     auth = HTTPBasicAuth(email, api_token)
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
+    
+    # First get total count using GET /search
+    count_url = f"https://{jira_instance}/rest/api/3/search"
+    count_params = {"jql": jql, "maxResults": 0, "fields": ["key"]}
+    
+    total_issues = 0
+    try:
+        count_response = requests.get(
+            count_url,
+            params=count_params,
+            headers={"Accept": "application/json"},
+            auth=auth,
+            timeout=30
+        )
+        if count_response.status_code == 200:
+            count_data = count_response.json()
+            total_issues = count_data.get("total", 0)
+            logger.debug(f"Total issues from count query: {total_issues}")
+    except Exception as e:
+        logger.warning(f"Failed to get total count: {e}")
+    
+    # Now get the first issue using POST /search/jql (original working method)
+    search_url = f"https://{jira_instance}/rest/api/3/search/jql"
     payload = {
         "jql": jql,
         "maxResults": 1,
@@ -304,12 +351,21 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
     
     try:
         response = requests.post(
-            search_url, headers=headers, auth=auth, json=payload, timeout=30
+            search_url,
+            headers=headers,
+            auth=auth,
+            json=payload,
+            timeout=30
         )
         
         if response.status_code == 200:
-            issues = response.json().get("issues", [])
-            total_issues = len(issues)
+            data = response.json()
+            issues = data.get("issues", [])
+            # Use total from count query, or fallback to response total
+            if total_issues == 0:
+                total_issues = data.get("total", 0)
+            logger.debug(f"Search returned {len(issues)} issues, total={total_issues}")
+            logger.debug(f"Returning issue_key={issues[0]['key'] if issues else None}, total_issues={total_issues}")
             return (issues[0]["key"], total_issues) if issues else (None, 0)
         
         logger.error(
@@ -371,14 +427,28 @@ def update_issue(issue_key, research_project, chargeable, email, api_token, jira
 
 def add_watcher(issue_key, email, api_token, jira_instance):
     """Add the current user as a watcher to a Jira issue."""
-    watcher_url = f"https://{jira_instance}/rest/api/3/issue/{issue_key}/watchers"
     auth = HTTPBasicAuth(email, api_token)
-    headers = {"Content-Type": "application/json"}
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
     
     try:
+        # First, get the user's accountId
+        user_url = f"https://{jira_instance}/rest/api/3/myself"
+        user_response = requests.get(user_url, headers=headers, auth=auth, timeout=30)
+        
+        if user_response.status_code != 200:
+            logger.warning(f"Failed to get user info: {user_response.status_code}")
+            return
+        
+        account_id = user_response.json().get("accountId")
+        if not account_id:
+            logger.warning("Could not get accountId for watcher")
+            return
+        
+        # Add watcher using accountId
+        watcher_url = f"https://{jira_instance}/rest/api/3/issue/{issue_key}/watchers"
         watcher_response = requests.post(
             watcher_url,
-            data=json.dumps(email),
+            json=account_id,  # Jira API expects accountId as JSON
             auth=auth,
             headers=headers,
             timeout=30
