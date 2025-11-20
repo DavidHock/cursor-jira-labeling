@@ -32,7 +32,7 @@ import { IssueResponse, Issue } from '../../models/issue.model';
           
           <div class="issue-description">
             <h3>Description</h3>
-            <p>{{ currentIssue?.description || 'No description available' }}</p>
+            <p [innerHTML]="getHighlightedDescription()"></p>
           </div>
 
           <div class="related-issues" *ngIf="issueData.issues.length > 1">
@@ -57,8 +57,9 @@ import { IssueResponse, Issue } from '../../models/issue.model';
                 [class.selected]="selectedProject === project"
                 [class.not-assignable]="project === 'NOT ASSIGNABLE'"
                 [class.partially-assignable]="project === 'PARTIALLY ASSIGNABLE'"
-                [class.has-hours]="hasHoursForProject(project)"
-                [class.no-hours]="!hasHoursForProject(project) && project !== 'NOT ASSIGNABLE' && project !== 'PARTIALLY ASSIGNABLE'"
+                [class.has-hours]="hasHoursForProject(project) || isProjectHighlighted(project)"
+                [class.no-hours]="!hasHoursForProject(project) && !isProjectHighlighted(project) && project !== 'NOT ASSIGNABLE' && project !== 'PARTIALLY ASSIGNABLE'"
+                [class.keyword-highlight]="isProjectHighlighted(project)"
                 [disabled]="updating"
                 (click)="onProjectSelect(project)"
               >
@@ -168,6 +169,14 @@ import { IssueResponse, Issue } from '../../models/issue.model';
           line-height: 1.6;
           color: #666;
         }
+
+        ::ng-deep .keyword-highlight-text {
+          color: #667eea;
+          font-weight: 700;
+          background: rgba(102, 126, 234, 0.1);
+          padding: 2px 4px;
+          border-radius: 3px;
+        }
       }
 
       .related-issues {
@@ -262,6 +271,12 @@ import { IssueResponse, Issue } from '../../models/issue.model';
         &:hover {
           transform: translateY(-2px);
           box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        &.keyword-highlight {
+          border-color: #667eea;
+          background: #e3f2fd;
+          box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
         }
 
         &.selected {
@@ -443,6 +458,18 @@ export class IssueViewComponent implements OnInit {
   // Fixed chargeable ID - always sent in background, not user-changeable
   private readonly CHARGEABLE_ID = '10396';
   
+  // Keyword mapping for auto-detection
+  private readonly keywordMapping: { [key: string]: string[] } = {
+    '6G-NETFAB': ['NETCONF', 'YANG'],
+    'GREENFIELD': ['REPORT'],
+    'INTENSE': ['CONFIG', 'JOBS', 'NCCM'],
+    'N-DOLLI': ['DISCOVERY'],
+    'QuINSiDa': ['USER', 'RIGHTS'],
+    'SASPIT': ['TELEMETRY', 'MODULE CONTROLER'],
+    'SUSTAINET': ['DASHBOARD', 'MEASUREMENT', 'AI'],
+    'SHINKA': ['RESOURCE POOL']
+  };
+  
   allProjects = [
     '6G-NETFAB',
     'GREENFIELD',
@@ -515,6 +542,68 @@ export class IssueViewComponent implements OnInit {
     }
     
     return false;
+  }
+
+  isProjectHighlighted(project: string): boolean {
+    if (!this.currentIssue?.description) {
+      return false;
+    }
+    
+    const description = this.currentIssue.description.toUpperCase();
+    const keywords = this.keywordMapping[project];
+    
+    if (!keywords) {
+      return false;
+    }
+    
+    return keywords.some(keyword => {
+      const upperKeyword = keyword.toUpperCase();
+      // Check for whole word matches (case insensitive)
+      const regex = new RegExp(`\\b${upperKeyword.replace(/\s+/g, '\\s+')}\\b`, 'i');
+      return regex.test(description);
+    });
+  }
+
+  getHighlightedDescription(): string {
+    if (!this.currentIssue?.description) {
+      return 'No description available';
+    }
+    
+    let description = this.currentIssue.description;
+    
+    // Sort keywords by length (longest first) to match longer phrases first
+    const sortedKeywords = Object.values(this.keywordMapping)
+      .flat()
+      .sort((a, b) => b.length - a.length);
+    
+    // Use a marker to track already highlighted text
+    const MARKER = '___HIGHLIGHTED___';
+    const markers: string[] = [];
+    let markerIndex = 0;
+    
+    // First pass: mark all matches
+    sortedKeywords.forEach(keyword => {
+      // Escape special regex characters
+      const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Replace spaces with \s+ to match any whitespace
+      const pattern = escapedKeyword.replace(/\s+/g, '\\s+');
+      const regex = new RegExp(`\\b(${pattern})\\b`, 'gi');
+      
+      description = description.replace(regex, (match) => {
+        const marker = `${MARKER}${markerIndex}${MARKER}`;
+        markers[markerIndex] = match;
+        markerIndex++;
+        return marker;
+      });
+    });
+    
+    // Second pass: replace markers with highlighted HTML
+    markers.forEach((originalText, index) => {
+      const marker = `${MARKER}${index}${MARKER}`;
+      description = description.replace(marker, `<strong class="keyword-highlight-text">${originalText}</strong>`);
+    });
+    
+    return description;
   }
 
   onProjectSelect(project: string) {
