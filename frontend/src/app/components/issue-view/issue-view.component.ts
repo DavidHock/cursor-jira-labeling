@@ -51,19 +51,6 @@ import { IssueResponse, Issue } from '../../models/issue.model';
               </select>
             </div>
 
-            <div class="form-group">
-              <label for="chargeable">Chargeable</label>
-              <select
-                id="chargeable"
-                name="chargeable"
-                [(ngModel)]="selectedChargeable"
-              >
-                <option value="">Select option (optional)</option>
-                <option value="chargeable">Chargeable</option>
-                <option value="non-chargeable">Non-Chargeable</option>
-              </select>
-            </div>
-
             <div *ngIf="updateError" class="error">{{ updateError }}</div>
             <div *ngIf="updateSuccess" class="success">{{ updateSuccess }}</div>
 
@@ -306,7 +293,9 @@ export class IssueViewComponent implements OnInit {
   updateSuccess = '';
   
   selectedProject = '';
-  selectedChargeable = '';
+  
+  // Fixed chargeable ID - always sent in background, not user-changeable
+  private readonly CHARGEABLE_ID = '10396';
   
   allProjects = [
     '6G-NETFAB',
@@ -370,13 +359,11 @@ export class IssueViewComponent implements OnInit {
     this.updateError = '';
     this.updateSuccess = '';
 
-    // Chargeable is optional - pass empty string if not selected
-    const chargeableId = this.selectedChargeable || '';
-
+    // Chargeable ID is always set to fixed value in background
     this.apiService.updateIssue(
       this.currentIssue.key,
       this.selectedProject,
-      chargeableId
+      this.CHARGEABLE_ID
     ).subscribe({
       next: (response) => {
         this.updating = false;
