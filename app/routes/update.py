@@ -26,7 +26,7 @@ def update_issue_route():
     data = request.get_json()
     issue_key = data.get("issue_key")
     research_project = data.get("research_project")
-    chargeable = data.get("chargeable")
+    chargeable = data.get("chargeable", "")  # Optional field
     
     if not issue_key or not research_project:
         return jsonify({"message": "Missing required fields."}), 400

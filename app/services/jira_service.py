@@ -329,10 +329,13 @@ def update_issue(issue_key, research_project, chargeable, email, api_token, jira
     """
     update_data = {
         "fields": {
-            Config.CUSTOM_FIELD_RESEARCH_PROJECT: {"value": research_project},
-            Config.CUSTOM_FIELD_CHARGEABLE: {"id": chargeable}
+            Config.CUSTOM_FIELD_RESEARCH_PROJECT: {"value": research_project}
         }
     }
+    
+    # Only add chargeable field if provided
+    if chargeable:
+        update_data["fields"][Config.CUSTOM_FIELD_CHARGEABLE] = {"id": chargeable}
     
     url = f"https://{jira_instance}/rest/api/3/issue/{issue_key}"
     auth = HTTPBasicAuth(email, api_token)

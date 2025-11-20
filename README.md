@@ -1,6 +1,6 @@
-# Jira Flask Application
+# Jira Labeling Tool
 
-A Flask-based web application for managing and analyzing Jira issues. The application provides a user-friendly interface for searching, viewing, and updating Jira issues with research project assignments and chargeable status.
+A modern full-stack application for managing and analyzing Jira issues. Features a **Flask REST API backend** and an **Angular 17 frontend** for a state-of-the-art user experience.
 
 ## 📋 Features
 
@@ -15,21 +15,30 @@ A Flask-based web application for managing and analyzing Jira issues. The applic
 
 ```
 jira/
-├── app/
+├── app/                     # Flask Backend (REST API)
 │   ├── __init__.py          # Application factory
 │   ├── config.py            # Configuration settings
-│   ├── routes/              # Route blueprints
-│   │   ├── auth.py          # Authentication routes
-│   │   ├── issues.py        # Issue viewing routes
-│   │   ├── search.py        # Search routes
-│   │   └── update.py        # Update routes
+│   ├── routes/              # API route blueprints
+│   │   ├── auth.py          # Authentication API
+│   │   ├── issues.py        # Issue viewing API
+│   │   ├── search.py        # Search API
+│   │   └── update.py        # Update API
 │   ├── services/            # Business logic layer
 │   │   ├── jira_service.py  # Jira API interactions
 │   │   └── session_service.py  # Session management
 │   └── utils/               # Utility functions
-├── templates/               # Jinja2 templates
+├── frontend/                # Angular 17 Frontend
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── components/  # Angular components
+│   │   │   ├── services/    # API services
+│   │   │   ├── models/      # TypeScript models
+│   │   │   └── guards/      # Route guards
+│   │   └── styles.scss      # Global styles
+│   ├── Dockerfile          # Frontend Docker image
+│   └── nginx.conf          # Nginx configuration
 ├── shared_volume/           # Shared data directory (Docker)
-├── Dockerfile              # Docker image definition
+├── Dockerfile              # Backend Docker image
 ├── docker-compose.yml      # Docker Compose configuration
 ├── requirements.txt        # Python dependencies
 ├── run.py                  # Application entry point
@@ -40,7 +49,8 @@ jira/
 
 ### Prerequisites
 
-- Python 3.9+
+- Python 3.9+ (for backend)
+- Node.js 20+ and npm (for frontend development)
 - Docker and Docker Compose (for containerized deployment)
 - Jira account with API token
 
@@ -69,12 +79,19 @@ jira/
    # Edit .env with your configuration
    ```
 
-5. **Run the application**
+5. **Run the backend API**
    ```bash
    python run.py
    ```
+   The API will be available at `http://localhost:8082`
 
-   The application will be available at `https://localhost:8081` (with SSL) or `http://localhost:8081`.
+6. **Run the frontend** (in a separate terminal)
+   ```bash
+   cd frontend
+   npm install
+   npm start
+   ```
+   The frontend will be available at `http://localhost:4200`
 
 ### Docker Deployment
 
@@ -90,7 +107,8 @@ jira/
    ```
 
 3. **Access the application**
-   - Open your browser and navigate to `http://localhost:8081`
+   - Frontend: `http://localhost:4200`
+   - Backend API: `http://localhost:8082/api`
 
 ## 🔧 Configuration
 
@@ -103,7 +121,7 @@ SECRET_KEY=your-secret-key-here
 JIRA_INSTANCE=infosim.atlassian.net
 FLASK_DEBUG=False
 FLASK_HOST=0.0.0.0
-FLASK_PORT=8081
+FLASK_PORT=8082
 ```
 
 ### Jira API Token
@@ -115,11 +133,19 @@ FLASK_PORT=8081
 
 ## 🚀 Usage
 
-1. **Login**: Enter your Jira email and API token
+1. **Login**: Enter your Jira email and API token on the login page
 2. **Search**: Enter a Jira filter ID to search for issues
-3. **View Issue**: Review issue details, hierarchy, and worklog statistics
-4. **Update Issue**: Set research project and chargeable status
-5. **Navigate**: Move through issues using the navigation buttons
+3. **View Issue**: Review issue details, hierarchy, and worklog statistics with beautiful charts
+4. **Update Issue**: Set research project and chargeable status, then move to the next issue
+5. **Statistics**: View time distribution across projects with interactive pie charts
+
+## 🎨 Frontend Features
+
+- **Modern UI**: Clean, responsive design with gradient backgrounds
+- **Real-time Updates**: Instant feedback on issue updates
+- **Visual Analytics**: Pie charts showing time distribution
+- **Responsive Design**: Works on desktop and mobile devices
+- **Type Safety**: Full TypeScript support with interfaces
 
 ## 🐳 Docker Commands
 
@@ -144,19 +170,30 @@ docker-compose up --build --force-recreate
 
 ### Code Structure
 
-The application follows Flask best practices:
-
+**Backend (Flask):**
 - **Application Factory Pattern**: Used in `app/__init__.py`
 - **Blueprint Organization**: Routes are organized by feature
+- **REST API**: All routes return JSON (no templates)
+- **CORS Support**: Configured for Angular frontend
 - **Service Layer**: Business logic separated from routes
-- **Configuration Management**: Centralized in `app/config.py`
+
+**Frontend (Angular):**
+- **Standalone Components**: Angular 17 standalone architecture
+- **Services**: API communication layer
+- **Guards**: Route protection for authentication
+- **Models**: TypeScript interfaces for type safety
 
 ### Adding New Features
 
-1. Create route blueprints in `app/routes/`
+**Backend:**
+1. Create route blueprints in `app/routes/` (return JSON)
 2. Add business logic to `app/services/`
 3. Register blueprints in `app/__init__.py`
-4. Update templates in `templates/`
+
+**Frontend:**
+1. Create components in `frontend/src/app/components/`
+2. Add services in `frontend/src/app/services/`
+3. Update routes in `frontend/src/app/app.routes.ts`
 
 ## 📝 License
 

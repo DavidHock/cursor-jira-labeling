@@ -33,6 +33,9 @@ class Config:
     
     # Flask settings
     HOST = os.getenv("FLASK_HOST", "0.0.0.0")
-    PORT = int(os.getenv("FLASK_PORT", "8081"))
+    PORT = int(os.getenv("FLASK_PORT", "8082"))
     DEBUG = os.getenv("FLASK_DEBUG", "False").lower() == "true"
+    
+    # CORS settings
+    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 
