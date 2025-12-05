@@ -59,7 +59,9 @@ def fetch_issue():
     sorted_projects = sorted(worklog_data.items(), key=lambda x: x[1], reverse=True)
     pie_chart = generate_pie_chart(dict(sorted_projects)) if sorted_projects else None
     
-    total_issues = int(request.args.get("total_issues", 1))
+    total_issues_param = request.args.get("total_issues", "1")
+    total_issues = int(total_issues_param)
+    logger.info(f"[ROUTE] fetch_issue - Received total_issues param: '{total_issues_param}', converted to: {total_issues}")
     
     # Known projects list
     known_projects = [
@@ -75,7 +77,7 @@ def fetch_issue():
         "NOT ASSIGNABLE"
     ]
     
-    return jsonify({
+    response_data = {
         "issues": issues_info,
         "total_issues": total_issues,
         "assignee_name": assignee_name,
@@ -84,5 +86,7 @@ def fetch_issue():
         "sorted_projects": [{"project": k, "hours": v} for k, v in sorted_projects],
         "projects_without_time": [p for p in known_projects if p not in worklog_data],
         "pie_chart": pie_chart
-    }), 200
+    }
+    logger.info(f"[ROUTE] fetch_issue - Returning total_issues in response: {total_issues}")
+    return jsonify(response_data), 200
 

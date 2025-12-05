@@ -12,6 +12,7 @@ import io
 import base64
 import json
 import logging
+from urllib.parse import quote
 from app.config import Config
 
 logger = logging.getLogger(__name__)
@@ -307,6 +308,7 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
     Search for issues based on a saved Jira filter.
     Returns tuple of (issue_key, total_issues_count).
     """
+    logger.info(f"[SEARCH] Starting search_issue_by_filter with filter_id={filter_id}")
     jql = get_jql_from_filter(filter_id, email, api_token, jira_instance)
     
     if not jql:
@@ -315,31 +317,65 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
         )
         return None, 0
     
+    logger.info(f"[SEARCH] JQL query retrieved: {jql[:100]}..." if len(jql) > 100 else f"[SEARCH] JQL query retrieved: {jql}")
+    
     auth = HTTPBasicAuth(email, api_token)
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
     
-    # First get total count using GET /search
-    count_url = f"https://{jira_instance}/rest/api/3/search"
-    count_params = {"jql": jql, "maxResults": 0, "fields": ["key"]}
-    
+    # Get total count by paginating through results
+    # The old GET /search endpoint is deprecated (returns 410)
+    # The new POST /search/jql endpoint doesn't return 'total' field
+    # We need to count by making paginated requests
+    count_url = f"https://{jira_instance}/rest/api/3/search/jql"
     total_issues = 0
+    max_count_requests = 100  # Limit to prevent infinite loops, max 100,000 issues
+    max_results_per_page = 1000
+    
+    logger.info(f"[SEARCH] Counting total issues by pagination (max {max_count_requests * max_results_per_page} issues)")
     try:
-        count_response = requests.get(
-            count_url,
-            params=count_params,
-            headers={"Accept": "application/json"},
-            auth=auth,
-            timeout=30
-        )
-        if count_response.status_code == 200:
-            count_data = count_response.json()
-            total_issues = count_data.get("total", 0)
-            logger.debug(f"Total issues from count query: {total_issues}")
+        next_page_token = None
+        request_count = 0
+        
+        while request_count < max_count_requests:
+            count_payload = {
+                "jql": jql,
+                "maxResults": max_results_per_page,
+                "fields": ["key"]  # Only fetch key field for counting
+            }
+            if next_page_token:
+                count_payload["nextPageToken"] = next_page_token
+            
+            count_response = requests.post(
+                count_url,
+                headers=headers,
+                auth=auth,
+                json=count_payload,
+                timeout=30
+            )
+            
+            if count_response.status_code == 200:
+                count_data = count_response.json()
+                issues = count_data.get("issues", [])
+                total_issues += len(issues)
+                is_last = count_data.get("isLast", True)
+                next_page_token = count_data.get("nextPageToken")
+                
+                logger.info(f"[SEARCH] Count request {request_count + 1}: found {len(issues)} issues, total so far: {total_issues}, isLast: {is_last}")
+                
+                if is_last or not next_page_token:
+                    break
+                
+                request_count += 1
+            else:
+                logger.warning(f"[SEARCH] Failed to get count page {request_count + 1}: {count_response.status_code}, {count_response.text}")
+                break
+        
+        logger.info(f"[SEARCH] Total issues counted: {total_issues}")
     except Exception as e:
-        logger.warning(f"Failed to get total count: {e}")
+        logger.error(f"[SEARCH] Failed to count issues: {e}", exc_info=True)
     
     # Now get the first issue using POST /search/jql (original working method)
     search_url = f"https://{jira_instance}/rest/api/3/search/jql"
@@ -348,6 +384,9 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
         "maxResults": 1,
         "fields": ["key"]
     }
+    
+    logger.info(f"[SEARCH] Making POST request to search URL: {search_url}")
+    logger.info(f"[SEARCH] POST payload: {json.dumps(payload, indent=2)}")
     
     try:
         response = requests.post(
@@ -358,15 +397,35 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
             timeout=30
         )
         
+        logger.info(f"[SEARCH] POST response status: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
+            logger.info(f"[SEARCH] POST response data keys: {list(data.keys())}")
+            logger.info(f"[SEARCH] POST response full data: {json.dumps(data, indent=2)}")
             issues = data.get("issues", [])
-            # Use total from count query, or fallback to response total
-            if total_issues == 0:
-                total_issues = data.get("total", 0)
-            logger.debug(f"Search returned {len(issues)} issues, total={total_issues}")
-            logger.debug(f"Returning issue_key={issues[0]['key'] if issues else None}, total_issues={total_issues}")
-            return (issues[0]["key"], total_issues) if issues else (None, 0)
+            # Get total from POST response (check both 'total' and 'maxResults' fields)
+            post_total = data.get("total", 0)
+            # Also check if total is in a different location
+            if post_total == 0:
+                # Some Jira API versions might return total differently
+                post_total = data.get("maxResults", 0)  # This won't work, but let's check
+            logger.info(f"[SEARCH] POST response total field: {post_total}")
+            
+            # Priority: 1) Count query total, 2) POST response total, 3) Keep 0 if both failed
+            if total_issues > 0:
+                logger.info(f"[SEARCH] Using total from count query: {total_issues}")
+            elif post_total > 0:
+                total_issues = post_total
+                logger.info(f"[SEARCH] Using total from POST response: {total_issues}")
+            else:
+                logger.warning(f"[SEARCH] WARNING: Both count query and POST returned 0 for total!")
+                logger.warning(f"[SEARCH] Count query returned: {total_issues}, POST returned: {post_total}")
+                logger.warning(f"[SEARCH] This means the Jira API is not returning the total count correctly")
+            
+            logger.info(f"[SEARCH] Search returned {len(issues)} issues, final total={total_issues}")
+            issue_key = issues[0]["key"] if issues else None
+            logger.info(f"[SEARCH] Returning issue_key={issue_key}, total_issues={total_issues}")
+            return (issue_key, total_issues) if issues else (None, 0)
         
         logger.error(
             f"Error searching issues: {response.status_code}, {response.text}"

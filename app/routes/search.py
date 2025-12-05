@@ -6,6 +6,7 @@ from app.services.session_service import load_session
 from app.services.jira_service import search_issue_by_filter
 from app.config import Config
 import logging
+import json
 
 search_bp = Blueprint("search", __name__)
 logger = logging.getLogger(__name__)
@@ -30,13 +31,15 @@ def search_issue():
         session["jira_instance"]
     )
     
-    logger.debug(f"Total issues found: {total_issues}")
+    logger.info(f"[ROUTE] search_issue - Received issue_key={issue_key}, total_issues={total_issues}")
     
     if issue_key:
-        return jsonify({
+        response_data = {
             "issue_key": issue_key,
             "total_issues": total_issues
-        }), 200
+        }
+        logger.info(f"[ROUTE] search_issue - Returning response: {json.dumps(response_data)}")
+        return jsonify(response_data), 200
     else:
         return jsonify({
             "message": "No issues found for the given filter.",

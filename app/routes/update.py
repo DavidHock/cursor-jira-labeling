@@ -10,6 +10,7 @@ from app.services.jira_service import (
 )
 from app.config import Config
 import logging
+import json
 
 update_bp = Blueprint("update", __name__)
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ def update_issue_route():
     
     # Get next issue
     filter_id = session.get("filter_id", Config.DEFAULT_FILTER_ID)
+    logger.info(f"[ROUTE] update_issue - Getting next issue with filter_id={filter_id}")
     next_issue_key, total_issues = search_issue_by_filter(
         filter_id,
         session["jira_email"],
@@ -65,16 +67,20 @@ def update_issue_route():
         session["jira_instance"]
     )
     
+    logger.info(f"[ROUTE] update_issue - Received next_issue_key={next_issue_key}, total_issues={total_issues}")
+    
     if next_issue_key:
         # Log the update
         with open(Config.UPDATED_ISSUES_LOG, "a") as f:
             f.write(f"Updated Issue: {issue_key}\n")
         
-        return jsonify({
+        response_data = {
             "message": "Issue updated successfully.",
             "next_issue": next_issue_key,
             "total_issues": total_issues
-        }), 200
+        }
+        logger.info(f"[ROUTE] update_issue - Returning response: {json.dumps(response_data)}")
+        return jsonify(response_data), 200
     else:
         return jsonify({
             "message": "Issue updated, but no more issues found.",

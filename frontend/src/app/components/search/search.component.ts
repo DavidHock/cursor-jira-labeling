@@ -79,6 +79,9 @@ export class SearchComponent {
 
     this.apiService.searchIssue(this.filterId).subscribe({
       next: (response) => {
+        console.log('[FRONTEND] search - Received response:', response);
+        console.log('[FRONTEND] search - response.total_issues:', response.total_issues);
+        console.log('[FRONTEND] search - Navigating with total_issues:', response.total_issues);
         this.router.navigate(['/issue', response.issue_key], {
           queryParams: { total_issues: response.total_issues }
         });

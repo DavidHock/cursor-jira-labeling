@@ -14,7 +14,7 @@ import { IssueResponse, Issue } from '../../models/issue.model';
       <div class="header">
         <h1>Jira Issue Labeling</h1>
         <div class="progress-info">
-          <span>{{ totalIssues }} remaining {{ totalIssues === 1 ? 'issue' : 'issues' }} to tag</span>
+          <span>{{ totalIssues }} {{ totalIssues === 1 ? 'issue' : 'issues' }}</span>
         </div>
       </div>
 
@@ -492,7 +492,14 @@ export class IssueViewComponent implements OnInit {
     this.route.params.subscribe(params => {
       const issueKey = params['issueKey'];
       this.route.queryParams.subscribe(queryParams => {
-        this.totalIssues = +queryParams['total_issues'] || 1;
+        const totalIssuesParam = queryParams['total_issues'];
+        console.log('[FRONTEND] ngOnInit - queryParams:', queryParams);
+        console.log('[FRONTEND] ngOnInit - total_issues param:', totalIssuesParam);
+        // Use nullish coalescing to handle 0 correctly (0 is a valid value)
+        this.totalIssues = totalIssuesParam !== undefined && totalIssuesParam !== null 
+          ? +totalIssuesParam 
+          : 1;
+        console.log('[FRONTEND] ngOnInit - totalIssues set to:', this.totalIssues);
         if (issueKey) {
           this.loadIssue(issueKey);
         }
@@ -506,11 +513,22 @@ export class IssueViewComponent implements OnInit {
     this.updateError = '';
     this.updateSuccess = '';
 
+    console.log('[FRONTEND] loadIssue - Calling fetchIssue with issueKey:', issueKey, 'totalIssues:', this.totalIssues);
     this.apiService.fetchIssue(issueKey, this.totalIssues).subscribe({
       next: (data) => {
+        console.log('[FRONTEND] loadIssue - Received data:', data);
+        console.log('[FRONTEND] loadIssue - data.total_issues:', data.total_issues);
         this.issueData = data;
         this.currentIssue = data.issues[0];
         this.selectedProject = this.currentIssue?.research_project || '';
+        // Update totalIssues from API response if available
+        const oldTotal = this.totalIssues;
+        if (data.total_issues && data.total_issues > 0) {
+          this.totalIssues = data.total_issues;
+          console.log('[FRONTEND] loadIssue - Updated totalIssues from', oldTotal, 'to', this.totalIssues);
+        } else {
+          console.log('[FRONTEND] loadIssue - Keeping totalIssues as', this.totalIssues, '(data.total_issues was:', data.total_issues, ')');
+        }
         this.loading = false;
       },
       error: (err) => {
@@ -637,7 +655,10 @@ export class IssueViewComponent implements OnInit {
         this.updating = false;
         this.updateSuccess = response.message || 'Issue updated successfully';
         
+        console.log('[FRONTEND] onUpdate - Update response:', response);
+        console.log('[FRONTEND] onUpdate - response.total_issues:', response.total_issues);
         if (response.next_issue) {
+          console.log('[FRONTEND] onUpdate - Navigating to next issue with total_issues:', response.total_issues);
           setTimeout(() => {
             this.router.navigate(['/issue', response.next_issue], {
               queryParams: { total_issues: response.total_issues }
