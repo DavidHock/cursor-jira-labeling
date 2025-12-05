@@ -362,12 +362,15 @@ def get_jql_from_filter(filter_id, email, api_token, jira_instance):
         return None
 
 
-def search_issue_by_filter(filter_id, email, api_token, jira_instance):
+def search_issue_by_filter(filter_id, email, api_token, jira_instance, exclude_issue_key=None):
     """
     Search for issues based on a saved Jira filter.
     Returns tuple of (issue_key, total_issues_count).
+    
+    Args:
+        exclude_issue_key: Optional issue key to exclude from results (for getting next issue)
     """
-    logger.info(f"[SEARCH] Starting search_issue_by_filter with filter_id={filter_id}")
+    logger.info(f"[SEARCH] Starting search_issue_by_filter with filter_id={filter_id}, exclude_issue_key={exclude_issue_key}")
     jql = get_jql_from_filter(filter_id, email, api_token, jira_instance)
     
     if not jql:
@@ -375,6 +378,11 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
             f"Error: Could not load saved filter with ID {filter_id}."
         )
         return None, 0
+    
+    # Exclude the current issue if specified (for getting next issue after update)
+    if exclude_issue_key:
+        jql = f"{jql} AND key != {exclude_issue_key}"
+        logger.info(f"[SEARCH] Modified JQL to exclude {exclude_issue_key}")
     
     logger.info(f"[SEARCH] JQL query retrieved: {jql[:100]}..." if len(jql) > 100 else f"[SEARCH] JQL query retrieved: {jql}")
     

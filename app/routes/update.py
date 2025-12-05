@@ -57,14 +57,15 @@ def update_issue_route():
         session["jira_instance"]
     )
     
-    # Get next issue
+    # Get next issue (exclude the current issue that was just updated)
     filter_id = session.get("filter_id", Config.DEFAULT_FILTER_ID)
-    logger.info(f"[ROUTE] update_issue - Getting next issue with filter_id={filter_id}")
+    logger.info(f"[ROUTE] update_issue - Getting next issue with filter_id={filter_id}, excluding {issue_key}")
     next_issue_key, total_issues = search_issue_by_filter(
         filter_id,
         session["jira_email"],
         session["jira_api_token"],
-        session["jira_instance"]
+        session["jira_instance"],
+        exclude_issue_key=issue_key  # Exclude the current issue to get the next one
     )
     
     logger.info(f"[ROUTE] update_issue - Received next_issue_key={next_issue_key}, total_issues={total_issues}")
