@@ -53,26 +53,44 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
         logger.warning("No valid assignee ID found, skipping worklog lookup.")
         return [], {}
     
-    logger.debug(f"Fetching worklogs for Assignee ID: {assignee_id}")
+    logger.info(f"[WORKLOGS] Fetching worklogs for Assignee ID: {assignee_id}")
     
     jql_query = f"worklogAuthor = {assignee_id} AND worklogDate >= -14d"
-    url = (
-        f"https://{jira_instance}/rest/api/3/search?"
-        f"jql={jql_query}&expand=worklog&fields=summary,worklog,{Config.CUSTOM_FIELD_RESEARCH_PROJECT}"
-    )
+    url = f"https://{jira_instance}/rest/api/3/search/jql"
     
     auth = HTTPBasicAuth(email, api_token)
-    headers = {"Accept": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "jql": jql_query,
+        "maxResults": 1000,  # Get up to 1000 issues with worklogs
+        "fields": ["summary", Config.CUSTOM_FIELD_RESEARCH_PROJECT]
+    }
+    
+    logger.info(f"[WORKLOGS] Making POST request to: {url}")
+    logger.info(f"[WORKLOGS] JQL query: {jql_query}")
     
     try:
-        response = requests.get(url, headers=headers, auth=auth, timeout=30)
+        response = requests.post(url, headers=headers, auth=auth, json=payload, timeout=30)
         
         worklog_data = {}
         worklog_issues = []
         
+        logger.info(f"[WORKLOGS] Response status: {response.status_code}")
         if response.status_code == 200:
-            issues = response.json().get("issues", [])
-            logger.debug(f"Found {len(issues)} issues with worklogs")
+            data = response.json()
+            issues = data.get("issues", [])
+            logger.info(f"[WORKLOGS] Found {len(issues)} issues with worklogs")
+            
+            # Handle pagination if needed
+            next_page_token = data.get("nextPageToken")
+            is_last = data.get("isLast", True)
+            
+            if not is_last and next_page_token:
+                logger.warning(f"[WORKLOGS] More than 1000 issues with worklogs found, only processing first 1000")
             
             for issue in issues:
                 issue_key = issue.get("key", "Unknown Issue")
@@ -121,17 +139,17 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
                         "time_spent_hours": round(total_time_spent, 2)
                     })
             
-            logger.debug(f"Worklogs Retrieved: {worklog_data}, Total issues: {len(worklog_issues)}")
+            logger.info(f"[WORKLOGS] Worklogs Retrieved: {worklog_data}, Total issues: {len(worklog_issues)}")
         else:
             logger.error(
-                f"Failed to fetch worklogs, Status Code: {response.status_code}, "
+                f"[WORKLOGS] Failed to fetch worklogs, Status Code: {response.status_code}, "
                 f"Response: {response.text}"
             )
         
         return worklog_issues, worklog_data
     
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error fetching worklogs: {e}")
+        logger.error(f"[WORKLOGS] Error fetching worklogs: {e}", exc_info=True)
         return [], {}
 
 
