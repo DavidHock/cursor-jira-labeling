@@ -4,9 +4,7 @@ Issue management routes for viewing Jira issues API.
 from flask import Blueprint, request, session, jsonify
 from app.services.session_service import load_session
 from app.services.jira_service import (
-    get_issue_hierarchy,
-    get_recent_worklogs,
-    generate_pie_chart
+    get_issue_hierarchy
 )
 from app.config import Config
 import logging
@@ -39,53 +37,18 @@ def fetch_issue():
     if not issues_info:
         return jsonify({"message": "Issue not found or unauthorized access"}), 404
     
-    assignee_id = issues_info[0].get("assignee_id")
     assignee_name = issues_info[0].get("assignee_name", "Unassigned")
     task_time_spent = issues_info[0].get("timespent", 0)
-    
-    logger.debug(f"Assignee ID: {assignee_id}, Assignee Name: {assignee_name}")
-    
-    worklog_issues, worklog_data = (
-        get_recent_worklogs(
-            assignee_id,
-            session["jira_email"],
-            session["jira_api_token"],
-            session["jira_instance"]
-        )
-        if assignee_id
-        else ([], {})
-    )
-    
-    sorted_projects = sorted(worklog_data.items(), key=lambda x: x[1], reverse=True)
-    pie_chart = generate_pie_chart(dict(sorted_projects)) if sorted_projects else None
     
     total_issues_param = request.args.get("total_issues", "1")
     total_issues = int(total_issues_param)
     logger.info(f"[ROUTE] fetch_issue - Received total_issues param: '{total_issues_param}', converted to: {total_issues}")
     
-    # Known projects list
-    known_projects = [
-        "6G-NETFAB",
-        "GREENFIELD",
-        "INTENSE",
-        "N-DOLLI",
-        "KIOps6G",
-        "SASPIT",
-        "SUSTAINET",
-        "SHINKA",
-        "PARTIALLY ASSIGNABLE",
-        "NOT ASSIGNABLE"
-    ]
-    
     response_data = {
         "issues": issues_info,
         "total_issues": total_issues,
         "assignee_name": assignee_name,
-        "task_time_spent": task_time_spent,
-        "worklog_issues": worklog_issues,
-        "sorted_projects": [{"project": k, "hours": v} for k, v in sorted_projects],
-        "projects_without_time": [p for p in known_projects if p not in worklog_data],
-        "pie_chart": pie_chart
+        "task_time_spent": task_time_spent
     }
     logger.info(f"[ROUTE] fetch_issue - Returning total_issues in response: {total_issues}")
     return jsonify(response_data), 200

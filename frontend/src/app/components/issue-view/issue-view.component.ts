@@ -14,7 +14,7 @@ import { IssueResponse, Issue } from '../../models/issue.model';
       <div class="header">
         <h1>Jira Issue Labeling</h1>
         <div class="progress-info">
-          <span>{{ totalIssues }} {{ totalIssues === 1 ? 'issue' : 'issues' }}</span>
+          <span>{{ formatTotalIssues(totalIssues) }}</span>
         </div>
       </div>
 
@@ -73,31 +73,6 @@ import { IssueResponse, Issue } from '../../models/issue.model';
           <div *ngIf="updateSuccess" class="success">{{ updateSuccess }}</div>
         </div>
 
-        <div class="stats-container">
-          <div class="card stats-card">
-            <h3>Time Distribution (Last 14 Days)</h3>
-            <div *ngIf="issueData.pie_chart" class="chart-container">
-              <img [src]="'data:image/png;base64,' + issueData.pie_chart" alt="Time Distribution Chart" />
-            </div>
-            <div *ngIf="!issueData.pie_chart && issueData.sorted_projects.length === 0" class="no-data">
-              <p>No worklog data available for the last 14 days.</p>
-            </div>
-          </div>
-
-          <div class="card worklog-card" *ngIf="issueData.worklog_issues.length > 0">
-            <h3>Recent Worklog Issues</h3>
-            <div class="worklog-list">
-              <div *ngFor="let worklog of issueData.worklog_issues" class="worklog-item">
-                <div class="worklog-key">{{ worklog.key }}</div>
-                <div class="worklog-name">{{ worklog.name }}</div>
-                <div class="worklog-meta">
-                  <span class="worklog-project">{{ worklog.research_project }}</span>
-                  <span class="worklog-hours">{{ worklog.time_spent_hours }}h</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   `,
@@ -123,9 +98,8 @@ import { IssueResponse, Issue } from '../../models/issue.model';
     }
 
     .issue-container {
-      display: grid;
-      grid-template-columns: 2fr 1fr;
-      gap: 24px;
+      display: block;
+      width: 100%;
     }
 
     .issue-card {
@@ -396,6 +370,119 @@ import { IssueResponse, Issue } from '../../models/issue.model';
         }
       }
 
+      .treemap-container {
+        margin-top: 20px;
+
+        .treemap-controls {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 16px;
+
+          .btn-back {
+            padding: 6px 12px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+
+            &:hover {
+              background: #5568d3;
+            }
+          }
+
+          .current-view {
+            color: #667eea;
+            font-weight: 600;
+          }
+        }
+
+        .treemap {
+          width: 100%;
+          min-height: 300px;
+          background: #f9f9f9;
+          border-radius: 8px;
+          padding: 12px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+
+          .treemap-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            width: 100%;
+
+            .treemap-item {
+              min-height: 80px;
+              border-radius: 6px;
+              padding: 12px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              transition: transform 0.2s, box-shadow 0.2s;
+              cursor: pointer;
+              position: relative;
+              overflow: hidden;
+
+              &.project-item {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: 2px solid #5568d3;
+
+                &:hover {
+                  transform: translateY(-2px);
+                  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+                }
+              }
+
+              &.issue-item {
+                background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+                color: white;
+                border: 2px solid #e91e63;
+                min-height: 60px;
+
+                &:hover {
+                  transform: translateY(-2px);
+                  box-shadow: 0 4px 12px rgba(233, 30, 99, 0.4);
+                }
+              }
+
+              .treemap-label {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                gap: 4px;
+                text-align: center;
+                width: 100%;
+
+                .treemap-name {
+                  font-weight: 600;
+                  font-size: 14px;
+                  white-space: nowrap;
+                  overflow: hidden;
+                  text-overflow: ellipsis;
+                  max-width: 100%;
+                }
+
+                .treemap-value {
+                  font-size: 16px;
+                  font-weight: 700;
+                  opacity: 0.95;
+                }
+
+                .treemap-count {
+                  font-size: 12px;
+                  opacity: 0.85;
+                  margin-top: 2px;
+                }
+              }
+            }
+          }
+        }
+      }
+
       .no-data {
         text-align: center;
         padding: 40px 20px;
@@ -435,11 +522,6 @@ import { IssueResponse, Issue } from '../../models/issue.model';
       }
     }
 
-    @media (max-width: 968px) {
-      .issue-container {
-        grid-template-columns: 1fr;
-      }
-    }
   `]
 })
 export class IssueViewComponent implements OnInit {
@@ -523,7 +605,7 @@ export class IssueViewComponent implements OnInit {
         this.selectedProject = this.currentIssue?.research_project || '';
         // Update totalIssues from API response if available
         const oldTotal = this.totalIssues;
-        if (data.total_issues && data.total_issues > 0) {
+        if (data.total_issues !== undefined && data.total_issues !== null) {
           this.totalIssues = data.total_issues;
           console.log('[FRONTEND] loadIssue - Updated totalIssues from', oldTotal, 'to', this.totalIssues);
         } else {
@@ -673,6 +755,17 @@ export class IssueViewComponent implements OnInit {
         this.updateError = err.error?.message || 'Failed to update issue';
       }
     });
+  }
+
+  formatTotalIssues(totalIssues: any): string {
+    if (typeof totalIssues === 'string' && totalIssues.endsWith('+')) {
+      return `${totalIssues} issues`;
+    }
+    const num = typeof totalIssues === 'string' ? parseInt(totalIssues, 10) : totalIssues;
+    if (isNaN(num)) {
+      return '0 issues';
+    }
+    return `${num} ${num === 1 ? 'issue' : 'issues'}`;
   }
 }
 

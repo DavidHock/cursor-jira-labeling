@@ -29,6 +29,7 @@ export interface IssueResponse {
   worklog_issues: WorklogIssue[];
   sorted_projects: ProjectTime[];
   projects_without_time: string[];
-  pie_chart?: string;
+  pie_chart?: string; // Deprecated, use treemap_data instead
+  treemap_data?: any;
 }
 

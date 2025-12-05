@@ -112,6 +112,10 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
                         
                         # Filter worklogs from last 14 days and by the assignee
                         cutoff_date = datetime.now() - timedelta(days=14)
+                        # Make cutoff_date timezone-aware if needed
+                        if cutoff_date.tzinfo is None:
+                            from datetime import timezone
+                            cutoff_date = cutoff_date.replace(tzinfo=timezone.utc)
                         
                         for wl in all_worklogs:
                             # Check if worklog is from the assignee and within 14 days
@@ -120,12 +124,22 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
                             
                             if wl_author_id == assignee_id and wl_started:
                                 try:
-                                    wl_date = datetime.fromisoformat(wl_started.replace("Z", "+00:00"))
+                                    # Parse the date - handle both Z and +00:00 formats
+                                    wl_started_clean = wl_started.replace("Z", "+00:00")
+                                    wl_date = datetime.fromisoformat(wl_started_clean)
+                                    # Ensure timezone-aware comparison
+                                    if wl_date.tzinfo is None:
+                                        from datetime import timezone
+                                        wl_date = wl_date.replace(tzinfo=timezone.utc)
+                                    
+                                    # Only count worklogs from the last 14 days
                                     if wl_date >= cutoff_date:
                                         total_time_spent += wl.get("timeSpentSeconds", 0) / 3600
-                                except:
-                                    # If date parsing fails, include it anyway
-                                    total_time_spent += wl.get("timeSpentSeconds", 0) / 3600
+                                    else:
+                                        logger.debug(f"[WORKLOGS] Skipping worklog from {wl_date} (older than 14 days)")
+                                except Exception as date_error:
+                                    logger.warning(f"[WORKLOGS] Failed to parse worklog date {wl_started}: {date_error}")
+                                    # Don't include if date parsing fails - be strict about 14 days
                 except Exception as e:
                     logger.warning(f"Failed to fetch worklogs for {issue_key}: {e}")
                 
@@ -153,26 +167,53 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
         return [], {}
 
 
-def generate_pie_chart(time_spent_by_project):
+def prepare_treemap_data(worklog_issues, time_spent_by_project):
     """
-    Generate a pie chart of time spent per research project.
-    Returns base64-encoded image string.
+    Prepare treemap data structure grouped by Research Project.
+    Returns a hierarchical structure for treemap visualization.
     """
-    if not time_spent_by_project:
+    if not time_spent_by_project or not worklog_issues:
         return None
     
-    labels = list(time_spent_by_project.keys())
-    values = list(time_spent_by_project.values())
+    # Sort projects by hours descending
+    sorted_projects = sorted(time_spent_by_project.items(), key=lambda x: x[1], reverse=True)
     
-    plt.figure(figsize=(6, 6))
-    plt.pie(values, labels=labels, autopct="%1.1f%%", startangle=140)
-    plt.title("Time Spent per Research Project (Last 14 Days)")
+    # Group worklog issues by project
+    project_issues = {}
+    for issue in worklog_issues:
+        project = issue.get("research_project", "Unknown")
+        if project not in project_issues:
+            project_issues[project] = []
+        project_issues[project].append(issue)
     
-    img = io.BytesIO()
-    plt.savefig(img, format="png")
-    img.seek(0)
-    plt.close()
-    return base64.b64encode(img.getvalue()).decode("utf8")
+    # Build treemap data structure
+    treemap_data = {
+        "name": "Time Distribution",
+        "children": []
+    }
+    
+    for project, hours in sorted_projects:
+        issues = project_issues.get(project, [])
+        # Sort issues within project by hours descending
+        issues_sorted = sorted(issues, key=lambda x: x.get("time_spent_hours", 0), reverse=True)
+        
+        project_node = {
+            "name": project,
+            "value": round(hours, 2),
+            "hours": round(hours, 2),
+            "children": [
+                {
+                    "name": issue.get("name", issue.get("key", "Unknown")),
+                    "key": issue.get("key", ""),
+                    "value": issue.get("time_spent_hours", 0),
+                    "hours": issue.get("time_spent_hours", 0)
+                }
+                for issue in issues_sorted
+            ]
+        }
+        treemap_data["children"].append(project_node)
+    
+    return treemap_data
 
 
 def extract_plain_text_from_description(description_data):
@@ -343,60 +384,12 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
         "Content-Type": "application/json"
     }
     
-    # Get total count by paginating through results
-    # The old GET /search endpoint is deprecated (returns 410)
-    # The new POST /search/jql endpoint doesn't return 'total' field
-    # We need to count by making paginated requests
-    count_url = f"https://{jira_instance}/rest/api/3/search/jql"
-    total_issues = 0
-    max_count_requests = 100  # Limit to prevent infinite loops, max 100,000 issues
-    max_results_per_page = 1000
-    
-    logger.info(f"[SEARCH] Counting total issues by pagination (max {max_count_requests * max_results_per_page} issues)")
-    try:
-        next_page_token = None
-        request_count = 0
-        
-        while request_count < max_count_requests:
-            count_payload = {
-                "jql": jql,
-                "maxResults": max_results_per_page,
-                "fields": ["key"]  # Only fetch key field for counting
-            }
-            if next_page_token:
-                count_payload["nextPageToken"] = next_page_token
-            
-            count_response = requests.post(
-                count_url,
-                headers=headers,
-                auth=auth,
-                json=count_payload,
-                timeout=30
-            )
-            
-            if count_response.status_code == 200:
-                count_data = count_response.json()
-                issues = count_data.get("issues", [])
-                total_issues += len(issues)
-                is_last = count_data.get("isLast", True)
-                next_page_token = count_data.get("nextPageToken")
-                
-                logger.info(f"[SEARCH] Count request {request_count + 1}: found {len(issues)} issues, total so far: {total_issues}, isLast: {is_last}")
-                
-                if is_last or not next_page_token:
-                    break
-                
-                request_count += 1
-            else:
-                logger.warning(f"[SEARCH] Failed to get count page {request_count + 1}: {count_response.status_code}, {count_response.text}")
-                break
-        
-        logger.info(f"[SEARCH] Total issues counted: {total_issues}")
-    except Exception as e:
-        logger.error(f"[SEARCH] Failed to count issues: {e}", exc_info=True)
-    
-    # Now get the first issue using POST /search/jql (original working method)
+    # Get first issue and check count (no pagination)
+    # If more than maxResults, show "maxResults+"
+    max_results = 1000  # Jira's default max per page
     search_url = f"https://{jira_instance}/rest/api/3/search/jql"
+    
+    # First, get one issue
     payload = {
         "jql": jql,
         "maxResults": 1,
@@ -404,7 +397,6 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
     }
     
     logger.info(f"[SEARCH] Making POST request to search URL: {search_url}")
-    logger.info(f"[SEARCH] POST payload: {json.dumps(payload, indent=2)}")
     
     try:
         response = requests.post(
@@ -418,32 +410,49 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance):
         logger.info(f"[SEARCH] POST response status: {response.status_code}")
         if response.status_code == 200:
             data = response.json()
-            logger.info(f"[SEARCH] POST response data keys: {list(data.keys())}")
-            logger.info(f"[SEARCH] POST response full data: {json.dumps(data, indent=2)}")
             issues = data.get("issues", [])
-            # Get total from POST response (check both 'total' and 'maxResults' fields)
-            post_total = data.get("total", 0)
-            # Also check if total is in a different location
-            if post_total == 0:
-                # Some Jira API versions might return total differently
-                post_total = data.get("maxResults", 0)  # This won't work, but let's check
-            logger.info(f"[SEARCH] POST response total field: {post_total}")
             
-            # Priority: 1) Count query total, 2) POST response total, 3) Keep 0 if both failed
-            if total_issues > 0:
-                logger.info(f"[SEARCH] Using total from count query: {total_issues}")
-            elif post_total > 0:
-                total_issues = post_total
-                logger.info(f"[SEARCH] Using total from POST response: {total_issues}")
+            if not issues:
+                logger.info(f"[SEARCH] No issues found")
+                return (None, 0)
+            
+            issue_key = issues[0]["key"]
+            
+            # Check count by requesting max_results
+            # If isLast is false, there are more than max_results
+            check_payload = {
+                "jql": jql,
+                "maxResults": max_results,
+                "fields": ["key"]
+            }
+            check_response = requests.post(
+                search_url,
+                headers=headers,
+                auth=auth,
+                json=check_payload,
+                timeout=30
+            )
+            
+            if check_response.status_code == 200:
+                check_data = check_response.json()
+                check_issues = check_data.get("issues", [])
+                check_is_last = check_data.get("isLast", True)
+                
+                if not check_is_last:
+                    # More than max_results issues
+                    total_issues = f"{max_results}+"
+                    logger.info(f"[SEARCH] More than {max_results} issues found, returning '{total_issues}'")
+                else:
+                    # Exact count (up to max_results)
+                    total_issues = len(check_issues)
+                    logger.info(f"[SEARCH] Found exactly {total_issues} issues")
             else:
-                logger.warning(f"[SEARCH] WARNING: Both count query and POST returned 0 for total!")
-                logger.warning(f"[SEARCH] Count query returned: {total_issues}, POST returned: {post_total}")
-                logger.warning(f"[SEARCH] This means the Jira API is not returning the total count correctly")
+                # Fallback: if we can't check, assume 1
+                total_issues = 1
+                logger.warning(f"[SEARCH] Could not check total, using {total_issues}")
             
-            logger.info(f"[SEARCH] Search returned {len(issues)} issues, final total={total_issues}")
-            issue_key = issues[0]["key"] if issues else None
             logger.info(f"[SEARCH] Returning issue_key={issue_key}, total_issues={total_issues}")
-            return (issue_key, total_issues) if issues else (None, 0)
+            return (issue_key, total_issues)
         
         logger.error(
             f"Error searching issues: {response.status_code}, {response.text}"
