@@ -463,7 +463,7 @@ export class IssueViewComponent implements OnInit {
     'GREENFIELD': ['REPORT'],
     'INTENSE': ['CONFIG', 'JOBS', 'NCCM'],
     'N-DOLLI': ['DISCOVERY'],
-    'QuINSiDa': ['USER', 'RIGHTS'],
+    'KIOps6G': ['USER', 'RIGHTS'],
     'SASPIT': ['TELEMETRY', 'MODULE CONTROLER'],
     'SUSTAINET': ['DASHBOARD', 'MEASUREMENT', 'AI'],
     'SHINKA': ['RESOURCE POOL']
@@ -474,7 +474,7 @@ export class IssueViewComponent implements OnInit {
     'GREENFIELD',
     'INTENSE',
     'N-DOLLI',
-    'QuINSiDa',
+    'KIOps6G',
     'SASPIT',
     'SUSTAINET',
     'SHINKA',

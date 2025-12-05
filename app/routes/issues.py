@@ -67,7 +67,7 @@ def fetch_issue():
         "GREENFIELD",
         "INTENSE",
         "N-DOLLI",
-        "QuINSiDa",
+        "KIOps6G",
         "SASPIT",
         "SUSTAINET",
         "SHINKA",
