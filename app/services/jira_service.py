@@ -379,11 +379,6 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance, exclude_i
         )
         return None, 0
     
-    # Exclude the current issue if specified (for getting next issue after update)
-    if exclude_issue_key:
-        jql = f"{jql} AND key != {exclude_issue_key}"
-        logger.info(f"[SEARCH] Modified JQL to exclude {exclude_issue_key}")
-    
     logger.info(f"[SEARCH] JQL query retrieved: {jql[:100]}..." if len(jql) > 100 else f"[SEARCH] JQL query retrieved: {jql}")
     
     auth = HTTPBasicAuth(email, api_token)
@@ -392,19 +387,21 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance, exclude_i
         "Content-Type": "application/json"
     }
     
-    # Get first issue and check count (no pagination)
+    # Get issues and check count (no pagination)
     # If more than maxResults, show "maxResults+"
     max_results = 1000  # Jira's default max per page
     search_url = f"https://{jira_instance}/rest/api/3/search/jql"
     
-    # First, get one issue
+    # Fetch multiple issues so we can filter out the excluded one in Python
+    # This avoids JQL syntax issues with exclusion
+    fetch_count = 100 if exclude_issue_key else 1
     payload = {
         "jql": jql,
-        "maxResults": 1,
+        "maxResults": fetch_count,
         "fields": ["key"]
     }
     
-    logger.info(f"[SEARCH] Making POST request to search URL: {search_url}")
+    logger.info(f"[SEARCH] Making POST request to search URL: {search_url} with maxResults={fetch_count}")
     
     try:
         response = requests.post(
@@ -420,14 +417,22 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance, exclude_i
             data = response.json()
             issues = data.get("issues", [])
             
+            logger.info(f"[SEARCH] Found {len(issues)} issues in response")
+            
+            # Filter out excluded issue if specified
+            if exclude_issue_key:
+                original_count = len(issues)
+                issues = [issue for issue in issues if issue["key"] != exclude_issue_key]
+                logger.info(f"[SEARCH] After excluding {exclude_issue_key}: {len(issues)} issues remaining (was {original_count})")
+            
             if not issues:
-                logger.info(f"[SEARCH] No issues found")
+                logger.warning(f"[SEARCH] No issues found after exclusion. Full response: {json.dumps(data)}")
                 return (None, 0)
             
             issue_key = issues[0]["key"]
+            logger.info(f"[SEARCH] Selected next issue: {issue_key}")
             
-            # Check count by requesting max_results
-            # If isLast is false, there are more than max_results
+            # Check total count by requesting max_results (without exclusion for accurate count)
             check_payload = {
                 "jql": jql,
                 "maxResults": max_results,
@@ -446,25 +451,51 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance, exclude_i
                 check_issues = check_data.get("issues", [])
                 check_is_last = check_data.get("isLast", True)
                 
-                if not check_is_last:
-                    # More than max_results issues
-                    total_issues = f"{max_results}+"
-                    logger.info(f"[SEARCH] More than {max_results} issues found, returning '{total_issues}'")
+                # If we excluded an issue, subtract 1 from the count
+                if exclude_issue_key:
+                    excluded_in_results = any(issue["key"] == exclude_issue_key for issue in check_issues)
+                    if excluded_in_results:
+                        # The excluded issue is in the results, so we need to subtract 1
+                        # But only if we're counting exactly, not if it's "max_results+"
+                        if check_is_last:
+                            total_issues = max(0, len(check_issues) - 1)
+                        else:
+                            total_issues = f"{max_results}+"
+                    else:
+                        # Excluded issue not in results (maybe it was already updated and no longer matches filter)
+                        if check_is_last:
+                            total_issues = len(check_issues)
+                        else:
+                            total_issues = f"{max_results}+"
                 else:
-                    # Exact count (up to max_results)
-                    total_issues = len(check_issues)
-                    logger.info(f"[SEARCH] Found exactly {total_issues} issues")
+                    if not check_is_last:
+                        # More than max_results issues
+                        total_issues = f"{max_results}+"
+                        logger.info(f"[SEARCH] More than {max_results} issues found, returning '{total_issues}'")
+                    else:
+                        # Exact count (up to max_results)
+                        total_issues = len(check_issues)
+                        logger.info(f"[SEARCH] Found exactly {total_issues} issues")
             else:
-                # Fallback: if we can't check, assume 1
-                total_issues = 1
+                # Fallback: if we can't check, use the count from the first request
+                if exclude_issue_key:
+                    total_issues = len(issues)  # Already filtered
+                else:
+                    total_issues = len(issues) if issues else 1
                 logger.warning(f"[SEARCH] Could not check total, using {total_issues}")
             
             logger.info(f"[SEARCH] Returning issue_key={issue_key}, total_issues={total_issues}")
             return (issue_key, total_issues)
         
         logger.error(
-            f"Error searching issues: {response.status_code}, {response.text}"
+            f"[SEARCH] Error searching issues: {response.status_code}, {response.text}"
         )
+        # Try to parse error details if available
+        try:
+            error_data = response.json()
+            logger.error(f"[SEARCH] Error details: {json.dumps(error_data)}")
+        except:
+            pass
         return None, 0
     
     except requests.exceptions.RequestException as e:
