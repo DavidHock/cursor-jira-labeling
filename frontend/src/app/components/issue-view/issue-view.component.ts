@@ -1,9 +1,12 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ApiService } from '../../services/api.service';
 import { IssueResponse, Issue } from '../../models/issue.model';
+import { combineLatest, EMPTY } from 'rxjs';
+import { takeUntil, switchMap, map } from 'rxjs/operators';
+import { Subject } from 'rxjs';
 
 @Component({
   selector: 'app-issue-view',
@@ -524,7 +527,7 @@ import { IssueResponse, Issue } from '../../models/issue.model';
 
   `]
 })
-export class IssueViewComponent implements OnInit {
+export class IssueViewComponent implements OnInit, OnDestroy {
   issueData: IssueResponse | null = null;
   currentIssue: Issue | null = null;
   totalIssues = 1;
@@ -538,6 +541,9 @@ export class IssueViewComponent implements OnInit {
   
   // Fixed chargeable ID - always sent in background, not user-changeable
   private readonly CHARGEABLE_ID = '10396';
+  
+  // For cleanup of subscriptions
+  private destroy$ = new Subject<void>();
   
   // Keyword mapping for auto-detection
   private readonly keywordMapping: { [key: string]: string[] } = {
@@ -571,53 +577,113 @@ export class IssueViewComponent implements OnInit {
   ) {}
 
   ngOnInit() {
-    this.route.params.subscribe(params => {
-      const issueKey = params['issueKey'];
-      this.route.queryParams.subscribe(queryParams => {
+    // Use combineLatest to properly handle both params and queryParams
+    // Use switchMap to automatically cancel previous requests when navigating to a new issue
+    // This avoids nested subscriptions, memory leaks, and race conditions
+    combineLatest([
+      this.route.params,
+      this.route.queryParams
+    ]).pipe(
+      takeUntil(this.destroy$),
+      switchMap(([params, queryParams]) => {
+        const issueKey = params['issueKey'];
         const totalIssuesParam = queryParams['total_issues'];
-        console.log('[FRONTEND] ngOnInit - queryParams:', queryParams);
+        
+        console.log('[FRONTEND] ngOnInit - params:', params, 'queryParams:', queryParams);
         console.log('[FRONTEND] ngOnInit - total_issues param:', totalIssuesParam);
+        
         // Use nullish coalescing to handle 0 correctly (0 is a valid value)
         this.totalIssues = totalIssuesParam !== undefined && totalIssuesParam !== null 
           ? +totalIssuesParam 
           : 1;
         console.log('[FRONTEND] ngOnInit - totalIssues set to:', this.totalIssues);
+        
+        // Reset state when loading a new issue
+        this.loading = true;
+        this.error = '';
+        this.updateError = '';
+        this.updateSuccess = '';
+        this.updating = false;
+        this.selectedProject = '';
+        
         if (issueKey) {
-          this.loadIssue(issueKey);
-        }
-      });
-    });
-  }
-
-  loadIssue(issueKey: string) {
-    this.loading = true;
-    this.error = '';
-    this.updateError = '';
-    this.updateSuccess = '';
-
-    console.log('[FRONTEND] loadIssue - Calling fetchIssue with issueKey:', issueKey, 'totalIssues:', this.totalIssues);
-    this.apiService.fetchIssue(issueKey, this.totalIssues).subscribe({
-      next: (data) => {
-        console.log('[FRONTEND] loadIssue - Received data:', data);
-        console.log('[FRONTEND] loadIssue - data.total_issues:', data.total_issues);
-        this.issueData = data;
-        this.currentIssue = data.issues[0];
-        this.selectedProject = this.currentIssue?.research_project || '';
-        // Update totalIssues from API response if available
-        const oldTotal = this.totalIssues;
-        if (data.total_issues !== undefined && data.total_issues !== null) {
-          this.totalIssues = data.total_issues;
-          console.log('[FRONTEND] loadIssue - Updated totalIssues from', oldTotal, 'to', this.totalIssues);
+          // Use switchMap to cancel previous request if a new one comes in
+          return this.apiService.fetchIssue(issueKey, this.totalIssues).pipe(
+            map(data => ({ data, issueKey }))
+          );
         } else {
-          console.log('[FRONTEND] loadIssue - Keeping totalIssues as', this.totalIssues, '(data.total_issues was:', data.total_issues, ')');
+          // Return empty observable if no issue key
+          return EMPTY;
         }
-        this.loading = false;
+      })
+    ).subscribe({
+      next: (result) => {
+        if (result && result.data && result.issueKey) {
+          console.log('[FRONTEND] ngOnInit - Received data:', result.data);
+          console.log('[FRONTEND] ngOnInit - data.total_issues:', result.data.total_issues);
+          this.issueData = result.data;
+          this.currentIssue = result.data.issues[0];
+          this.selectedProject = this.currentIssue?.research_project || '';
+          // Update totalIssues from API response if available
+          const oldTotal = this.totalIssues;
+          if (result.data.total_issues !== undefined && result.data.total_issues !== null) {
+            this.totalIssues = result.data.total_issues;
+            console.log('[FRONTEND] ngOnInit - Updated totalIssues from', oldTotal, 'to', this.totalIssues);
+          } else {
+            console.log('[FRONTEND] ngOnInit - Keeping totalIssues as', this.totalIssues, '(data.total_issues was:', result.data.total_issues, ')');
+          }
+          this.loading = false;
+        }
       },
       error: (err) => {
         this.loading = false;
         this.error = err.error?.message || 'Failed to load issue';
+        console.error('[FRONTEND] ngOnInit - Error:', err);
       }
     });
+  }
+
+  ngOnDestroy() {
+    // Clean up all subscriptions
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
+
+  loadIssue(issueKey: string) {
+    // Reset all state when loading a new issue
+    this.loading = true;
+    this.error = '';
+    this.updateError = '';
+    this.updateSuccess = '';
+    this.updating = false; // Reset updating flag
+    this.selectedProject = ''; // Reset selected project
+
+    console.log('[FRONTEND] loadIssue - Calling fetchIssue with issueKey:', issueKey, 'totalIssues:', this.totalIssues);
+    this.apiService.fetchIssue(issueKey, this.totalIssues)
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (data) => {
+          console.log('[FRONTEND] loadIssue - Received data:', data);
+          console.log('[FRONTEND] loadIssue - data.total_issues:', data.total_issues);
+          this.issueData = data;
+          this.currentIssue = data.issues[0];
+          this.selectedProject = this.currentIssue?.research_project || '';
+          // Update totalIssues from API response if available
+          const oldTotal = this.totalIssues;
+          if (data.total_issues !== undefined && data.total_issues !== null) {
+            this.totalIssues = data.total_issues;
+            console.log('[FRONTEND] loadIssue - Updated totalIssues from', oldTotal, 'to', this.totalIssues);
+          } else {
+            console.log('[FRONTEND] loadIssue - Keeping totalIssues as', this.totalIssues, '(data.total_issues was:', data.total_issues, ')');
+          }
+          this.loading = false;
+        },
+        error: (err) => {
+          this.loading = false;
+          this.error = err.error?.message || 'Failed to load issue';
+          console.error('[FRONTEND] loadIssue - Error:', err);
+        }
+      });
   }
 
   hasHoursForProject(project: string): boolean {
@@ -723,6 +789,12 @@ export class IssueViewComponent implements OnInit {
       return;
     }
 
+    // Prevent multiple simultaneous updates
+    if (this.updating) {
+      console.log('[FRONTEND] onUpdate - Update already in progress, ignoring');
+      return;
+    }
+
     this.updating = true;
     this.updateError = '';
     this.updateSuccess = '';
@@ -732,28 +804,41 @@ export class IssueViewComponent implements OnInit {
       this.currentIssue.key,
       selectedProject,
       this.CHARGEABLE_ID
-    ).subscribe({
-      next: (response) => {
-        this.updating = false;
-        this.updateSuccess = response.message || 'Issue updated successfully';
-        
-        console.log('[FRONTEND] onUpdate - Update response:', response);
-        console.log('[FRONTEND] onUpdate - response.total_issues:', response.total_issues);
-        if (response.next_issue) {
-          console.log('[FRONTEND] onUpdate - Navigating to next issue with total_issues:', response.total_issues);
-          // Navigate immediately to next issue
-          this.router.navigate(['/issue', response.next_issue], {
-            queryParams: { total_issues: response.total_issues }
-          });
-        } else {
-          this.updateSuccess += ' - No more issues found';
+    )
+      .pipe(takeUntil(this.destroy$))
+      .subscribe({
+        next: (response) => {
+          console.log('[FRONTEND] onUpdate - Update response:', response);
+          console.log('[FRONTEND] onUpdate - response.total_issues:', response.total_issues);
+          
+          if (response.next_issue) {
+            console.log('[FRONTEND] onUpdate - Navigating to next issue with total_issues:', response.total_issues);
+            // Reset state before navigation
+            this.updating = false;
+            this.updateError = '';
+            this.updateSuccess = '';
+            
+            // Navigate immediately to next issue
+            this.router.navigate(['/issue', response.next_issue], {
+              queryParams: { total_issues: response.total_issues }
+            }).then(() => {
+              console.log('[FRONTEND] onUpdate - Navigation completed');
+            }).catch((err) => {
+              console.error('[FRONTEND] onUpdate - Navigation error:', err);
+              this.updateError = 'Failed to navigate to next issue';
+              this.updating = false;
+            });
+          } else {
+            this.updating = false;
+            this.updateSuccess = response.message || 'Issue updated successfully - No more issues found';
+          }
+        },
+        error: (err) => {
+          this.updating = false;
+          this.updateError = err.error?.message || 'Failed to update issue';
+          console.error('[FRONTEND] onUpdate - Error:', err);
         }
-      },
-      error: (err) => {
-        this.updating = false;
-        this.updateError = err.error?.message || 'Failed to update issue';
-      }
-    });
+      });
   }
 
   formatTotalIssues(totalIssues: any): string {
