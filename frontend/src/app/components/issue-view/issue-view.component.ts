@@ -741,11 +741,10 @@ export class IssueViewComponent implements OnInit {
         console.log('[FRONTEND] onUpdate - response.total_issues:', response.total_issues);
         if (response.next_issue) {
           console.log('[FRONTEND] onUpdate - Navigating to next issue with total_issues:', response.total_issues);
-          setTimeout(() => {
-            this.router.navigate(['/issue', response.next_issue], {
-              queryParams: { total_issues: response.total_issues }
-            });
-          }, 1000);
+          // Navigate immediately to next issue
+          this.router.navigate(['/issue', response.next_issue], {
+            queryParams: { total_issues: response.total_issues }
+          });
         } else {
           this.updateSuccess += ' - No more issues found';
         }
