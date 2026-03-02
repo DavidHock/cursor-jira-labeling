@@ -551,12 +551,12 @@ export class IssueViewComponent implements OnInit, OnDestroy {
   // Keyword mapping for auto-detection
   private readonly keywordMapping: { [key: string]: string[] } = {
     '6G-NETFAB': ['NETCONF', 'YANG'],
-    'GREENFIELD': ['REPORT', 'GEO MAP', 'ANALYZER'],
+    'GREENFIELD': ['REPORT', 'GEO MAP'],
     'INTENSE': ['CONFIG', 'JOBS', 'NCCM'],
     'N-DOLLI': ['DISCOVERY'],
     'KIOps6G': ['USER', 'RIGHTS'],
     'SASPIT': ['TELEMETRY', 'MODULE CONTROLER'],
-    'SUSTAINET': ['DASHBOARD', 'MEASUREMENT', 'AI', 'TAG'],
+    'SUSTAINET': ['DASHBOARD', 'MEASUREMENT', 'AI', 'TAG', 'ANALYZER'],
     'SHINKA': ['RESOURCE POOL', 'RESOURCE']
   };
 
