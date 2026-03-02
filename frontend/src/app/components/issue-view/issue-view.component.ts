@@ -26,7 +26,7 @@ import { Subject } from 'rxjs';
 
       <div *ngIf="issueData && !loading" class="issue-container">
         <div class="card issue-card">
-          <h2>{{ currentIssue?.name }}</h2>
+          <h2 [innerHTML]="getHighlightedTitle()"></h2>
           <div class="issue-meta">
             <span class="issue-key">{{ currentIssue?.key }}</span>
             <span class="assignee">Assignee: {{ issueData.assignee_name }}</span>
@@ -36,18 +36,6 @@ import { Subject } from 'rxjs';
           <div class="issue-description">
             <h3>Description</h3>
             <p [innerHTML]="getHighlightedDescription()"></p>
-          </div>
-
-          <div class="related-issues" *ngIf="issueData.issues.length > 1">
-            <h3>Related Issues</h3>
-            <div class="related-issues-list">
-              <div *ngFor="let issue of issueData.issues" class="related-issue-item" [class.main-issue]="issue.link_type === 'Self'">
-                <span class="related-issue-key">{{ issue.key }}</span>
-                <span class="related-issue-link-type">{{ issue.link_type }}</span>
-                <span class="related-issue-name">{{ issue.name }}</span>
-                <span class="related-issue-project">{{ issue.research_project || 'N/A' }}</span>
-              </div>
-            </div>
           </div>
 
           <div class="form-group">
@@ -60,15 +48,28 @@ import { Subject } from 'rxjs';
                 [class.selected]="selectedProject === project"
                 [class.not-assignable]="project === 'NOT ASSIGNABLE'"
                 [class.partially-assignable]="project === 'PARTIALLY ASSIGNABLE'"
-                [class.has-hours]="hasHoursForProject(project) || isProjectHighlighted(project)"
-                [class.no-hours]="!hasHoursForProject(project) && !isProjectHighlighted(project) && project !== 'NOT ASSIGNABLE' && project !== 'PARTIALLY ASSIGNABLE'"
-                [class.keyword-highlight]="isProjectHighlighted(project)"
+                [class.related-match]="isRelatedTaskMatch(project)"
+                [class.title-match]="!isRelatedTaskMatch(project) && isTitleMatch(project)"
+                [class.text-match]="!isRelatedTaskMatch(project) && !isTitleMatch(project) && isTextMatch(project)"
+                [class.no-match]="!isRelatedTaskMatch(project) && !isTitleMatch(project) && !isTextMatch(project) && project !== 'NOT ASSIGNABLE' && project !== 'PARTIALLY ASSIGNABLE'"
                 [disabled]="updating"
                 (click)="onProjectSelect(project)"
               >
                 <span *ngIf="!updating || selectedProject !== project">{{ project }}</span>
                 <span *ngIf="updating && selectedProject === project">Updating...</span>
               </button>
+            </div>
+          </div>
+
+          <div class="related-issues" *ngIf="issueData.issues.length > 1">
+            <h3>Related Issues</h3>
+            <div class="related-issues-list">
+              <div *ngFor="let issue of issueData.issues" class="related-issue-item" [class.main-issue]="issue.link_type === 'Self'">
+                <span class="related-issue-key">{{ issue.key }}</span>
+                <span class="related-issue-link-type">{{ issue.link_type }}</span>
+                <span class="related-issue-name">{{ issue.name }}</span>
+                <span class="related-issue-project">{{ issue.research_project || 'N/A' }}</span>
+              </div>
             </div>
           </div>
 
@@ -109,6 +110,12 @@ import { Subject } from 'rxjs';
       h2 {
         color: #667eea;
         margin-bottom: 16px;
+
+        ::ng-deep .keyword-highlight-title {
+          color: #8b5cf6;
+          font-style: italic;
+          font-weight: 600;
+        }
       }
 
       .issue-meta {
@@ -250,51 +257,45 @@ import { Subject } from 'rxjs';
           box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
         }
 
-        &.keyword-highlight {
-          border-color: #667eea;
-          background: #e3f2fd;
-          box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
-        }
-
         &.selected {
           border-width: 3px;
           box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.3);
         }
 
-        &.not-assignable {
-          background: #fee;
-          border-color: #f44;
-          color: #c33;
-
+        &.related-match {
+          background: #e6ffed;
+          border-color: #22c55e;
+          color: #166534;
+          
           &.selected {
-            background: #fcc;
-            border-color: #f00;
+            background: #dcfce7;
+            border-color: #16a34a;
           }
         }
 
-        &.partially-assignable {
-          background: #ffd;
-          border-color: #ff0;
-          color: #990;
-
-          &.selected {
-            background: #ffc;
-            border-color: #ff0;
-          }
-        }
-
-        &.has-hours {
-          background: #e3f2fd;
+        &.text-match {
+          background: #e0e7ff;
           border-color: #667eea;
-          color: #1976d2;
+          color: #1d4ed8;
 
           &.selected {
-            background: #bbdefb;
-            border-color: #2196f3;
+            background: #c7d2fe;
+            border-color: #4f46e5;
           }
         }
 
-        &.no-hours {
+        &.title-match {
+          background: #f5f3ff;
+          border-color: #8b5cf6;
+          color: #5b21b6;
+
+          &.selected {
+            background: #ede9fe;
+            border-color: #7c3aed;
+          }
+        }
+
+        &.no-match {
           background: #f5f5f5;
           border-color: #bdbdbd;
           color: #757575;
@@ -304,6 +305,8 @@ import { Subject } from 'rxjs';
             border-color: #9e9e9e;
           }
         }
+
+        &.not-assignable {
       }
     }
 
@@ -536,19 +539,19 @@ export class IssueViewComponent implements OnInit, OnDestroy {
   updating = false;
   updateError = '';
   updateSuccess = '';
-  
+
   selectedProject = '';
-  
+
   // Fixed chargeable ID - always sent in background, not user-changeable
   private readonly CHARGEABLE_ID = '10396';
-  
+
   // For cleanup of subscriptions
   private destroy$ = new Subject<void>();
-  
+
   // Keyword mapping for auto-detection
   private readonly keywordMapping: { [key: string]: string[] } = {
     '6G-NETFAB': ['NETCONF', 'YANG'],
-    'GREENFIELD': ['REPORT'],
+    'GREENFIELD': ['REPORT', 'GEO MAP'],
     'INTENSE': ['CONFIG', 'JOBS', 'NCCM'],
     'N-DOLLI': ['DISCOVERY'],
     'KIOps6G': ['USER', 'RIGHTS'],
@@ -556,7 +559,7 @@ export class IssueViewComponent implements OnInit, OnDestroy {
     'SUSTAINET': ['DASHBOARD', 'MEASUREMENT', 'AI'],
     'SHINKA': ['RESOURCE POOL']
   };
-  
+
   allProjects = [
     '6G-NETFAB',
     'GREENFIELD',
@@ -574,7 +577,7 @@ export class IssueViewComponent implements OnInit, OnDestroy {
     private route: ActivatedRoute,
     private router: Router,
     private apiService: ApiService
-  ) {}
+  ) { }
 
   ngOnInit() {
     // Use combineLatest to properly handle both params and queryParams
@@ -588,16 +591,16 @@ export class IssueViewComponent implements OnInit, OnDestroy {
       switchMap(([params, queryParams]) => {
         const issueKey = params['issueKey'];
         const totalIssuesParam = queryParams['total_issues'];
-        
+
         console.log('[FRONTEND] ngOnInit - params:', params, 'queryParams:', queryParams);
         console.log('[FRONTEND] ngOnInit - total_issues param:', totalIssuesParam);
-        
+
         // Use nullish coalescing to handle 0 correctly (0 is a valid value)
-        this.totalIssues = totalIssuesParam !== undefined && totalIssuesParam !== null 
-          ? +totalIssuesParam 
+        this.totalIssues = totalIssuesParam !== undefined && totalIssuesParam !== null
+          ? +totalIssuesParam
           : 1;
         console.log('[FRONTEND] ngOnInit - totalIssues set to:', this.totalIssues);
-        
+
         // Reset state when loading a new issue
         this.loading = true;
         this.error = '';
@@ -605,7 +608,7 @@ export class IssueViewComponent implements OnInit, OnDestroy {
         this.updateSuccess = '';
         this.updating = false;
         this.selectedProject = '';
-        
+
         if (issueKey) {
           // Use switchMap to cancel previous request if a new one comes in
           return this.apiService.fetchIssue(issueKey, this.totalIssues).pipe(
@@ -690,59 +693,75 @@ export class IssueViewComponent implements OnInit, OnDestroy {
     if (!this.issueData) {
       return false;
     }
-    
+
     // Check if project has hours in worklogs
     if (this.issueData.sorted_projects) {
       if (this.issueData.sorted_projects.some(p => p.project === project)) {
         return true;
       }
     }
-    
+
     // Check if any related issue has this project assigned
     if (this.issueData.issues) {
       return this.issueData.issues.some(issue => issue.research_project === project);
     }
-    
+
     return false;
   }
 
-  isProjectHighlighted(project: string): boolean {
-    if (!this.currentIssue?.description) {
-      return false;
-    }
-    
+  isRelatedTaskMatch(project: string): boolean {
+    if (!this.issueData?.issues) return false;
+    // Check if any other issue has this project
+    return this.issueData.issues.some(issue =>
+      issue.link_type !== 'Self' && issue.research_project === project
+    );
+  }
+
+  isTextMatch(project: string): boolean {
+    if (!this.currentIssue?.description) return false;
     const description = this.currentIssue.description.toUpperCase();
     const keywords = this.keywordMapping[project];
-    
-    if (!keywords) {
-      return false;
-    }
-    
+    if (!keywords) return false;
+
     return keywords.some(keyword => {
-      const upperKeyword = keyword.toUpperCase();
-      // Check for whole word matches (case insensitive)
-      const regex = new RegExp(`\\b${upperKeyword.replace(/\s+/g, '\\s+')}\\b`, 'i');
+      const regex = new RegExp(`\\b${keyword.replace(/\s+/g, '\\s+')}\\b`, 'i');
       return regex.test(description);
     });
+  }
+
+  isTitleMatch(project: string): boolean {
+    if (!this.currentIssue?.name) return false;
+    const title = this.currentIssue.name.toUpperCase();
+    const keywords = this.keywordMapping[project];
+    if (!keywords) return false;
+
+    return keywords.some(keyword => {
+      const regex = new RegExp(`\\b${keyword.replace(/\s+/g, '\\s+')}\\b`, 'i');
+      return regex.test(title);
+    });
+  }
+
+  isProjectHighlighted(project: string): boolean {
+    return this.isTextMatch(project) || this.isTitleMatch(project);
   }
 
   getHighlightedDescription(): string {
     if (!this.currentIssue?.description) {
       return 'No description available';
     }
-    
+
     let description = this.currentIssue.description;
-    
+
     // Sort keywords by length (longest first) to match longer phrases first
     const sortedKeywords = Object.values(this.keywordMapping)
       .flat()
       .sort((a, b) => b.length - a.length);
-    
+
     // Use a marker to track already highlighted text
     const MARKER = '___HIGHLIGHTED___';
     const markers: string[] = [];
     let markerIndex = 0;
-    
+
     // First pass: mark all matches
     sortedKeywords.forEach(keyword => {
       // Escape special regex characters
@@ -750,7 +769,7 @@ export class IssueViewComponent implements OnInit, OnDestroy {
       // Replace spaces with \s+ to match any whitespace
       const pattern = escapedKeyword.replace(/\s+/g, '\\s+');
       const regex = new RegExp(`\\b(${pattern})\\b`, 'gi');
-      
+
       description = description.replace(regex, (match) => {
         const marker = `${MARKER}${markerIndex}${MARKER}`;
         markers[markerIndex] = match;
@@ -758,32 +777,68 @@ export class IssueViewComponent implements OnInit, OnDestroy {
         return marker;
       });
     });
-    
+
     // Second pass: replace markers with highlighted HTML
     markers.forEach((originalText, index) => {
       const marker = `${MARKER}${index}${MARKER}`;
       description = description.replace(marker, `<strong class="keyword-highlight-text">${originalText}</strong>`);
     });
-    
+
     return description;
+  }
+
+  getHighlightedTitle(): string {
+    if (!this.currentIssue?.name) {
+      return '';
+    }
+
+    let title = this.currentIssue.name;
+
+    const sortedKeywords = Object.values(this.keywordMapping)
+      .flat()
+      .sort((a, b) => b.length - a.length);
+
+    const MARKER = '___TITLE_HIGHLIGHT___';
+    const markers: string[] = [];
+    let markerIndex = 0;
+
+    sortedKeywords.forEach(keyword => {
+      const escapedKeyword = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = escapedKeyword.replace(/\s+/g, '\\s+');
+      const regex = new RegExp(`\\b(${pattern})\\b`, 'gi');
+
+      title = title.replace(regex, (match) => {
+        const marker = `${MARKER}${markerIndex}${MARKER}`;
+        markers[markerIndex] = match;
+        markerIndex++;
+        return marker;
+      });
+    });
+
+    markers.forEach((originalText, index) => {
+      const marker = `${MARKER}${index}${MARKER}`;
+      title = title.replace(marker, `<span class="keyword-highlight-title">${originalText}</span>`);
+    });
+
+    return title;
   }
 
   onProjectSelect(project: string) {
     if (this.updating) {
       return; // Prevent multiple clicks while updating
     }
-    
+
     this.selectedProject = project;
     this.updateError = '';
     this.updateSuccess = '';
-    
+
     // Immediately submit the update
     this.onUpdate(project);
   }
 
   onUpdate(project?: string) {
     const selectedProject = project || this.selectedProject;
-    
+
     if (!this.currentIssue || !selectedProject) {
       this.updateError = 'Please select a research project';
       return;
@@ -810,14 +865,14 @@ export class IssueViewComponent implements OnInit, OnDestroy {
         next: (response) => {
           console.log('[FRONTEND] onUpdate - Update response:', response);
           console.log('[FRONTEND] onUpdate - response.total_issues:', response.total_issues);
-          
+
           if (response.next_issue) {
             console.log('[FRONTEND] onUpdate - Navigating to next issue with total_issues:', response.total_issues);
             // Reset state before navigation
             this.updating = false;
             this.updateError = '';
             this.updateSuccess = '';
-            
+
             // Navigate immediately to next issue
             this.router.navigate(['/issue', response.next_issue], {
               queryParams: { total_issues: response.total_issues }
