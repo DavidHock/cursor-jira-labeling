@@ -15,7 +15,70 @@ import logging
 from urllib.parse import quote
 from app.config import Config
 
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from app.config import Config
+
 logger = logging.getLogger(__name__)
+
+
+def _make_request(url, method="GET", auth=None, headers=None, json=None, timeout=30, max_retries=3):
+    """
+    Helper to make HTTP requests with retry logic and exponential backoff.
+    Honors Retry-After header for 429 errors.
+    """
+    # Sanitize auth if provided
+    if auth:
+        auth = HTTPBasicAuth(auth.username.strip(), auth.password.strip())
+    
+    # Mask token for logging: "ATATT...last4"
+    token_masked = "None"
+    if auth and auth.password:
+        p = auth.password
+        token_masked = f"{p[:5]}...{p[-4:]}" if len(p) > 10 else "***"
+    
+    logger.debug(f"[_make_request] {method} {url}")
+    logger.debug(f"[_make_request] Auth User: {auth.username if auth else 'None'}, Token: {token_masked}")
+
+    retry_count = 0
+    response = None
+    while retry_count <= max_retries:
+        try:
+            if method == "GET":
+                response = requests.get(url, auth=auth, headers=headers, timeout=timeout)
+            elif method == "POST":
+                response = requests.post(url, auth=auth, headers=headers, json=json, timeout=timeout)
+            elif method == "PUT":
+                response = requests.put(url, auth=auth, headers=headers, json=json, timeout=timeout)
+            else:
+                raise ValueError(f"Unsupported method: {method}")
+
+            if response.status_code == 429:
+                retry_after = int(response.headers.get("Retry-After", 2 * (retry_count + 1)))
+                logger.warning(f"Rate limited (429). Retrying in {retry_after}s... (Attempt {retry_count + 1}/{max_retries})")
+                time.sleep(retry_after)
+                retry_count += 1
+                continue
+
+            if response.status_code >= 500:
+                backoff = 2 ** retry_count
+                logger.warning(f"Server error ({response.status_code}). Retrying in {backoff}s... (Attempt {retry_count + 1}/{max_retries})")
+                time.sleep(backoff)
+                retry_count += 1
+                continue
+
+            return response
+
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            backoff = 2 ** retry_count
+            logger.warning(f"Network error: {e}. Retrying in {backoff}s... (Attempt {retry_count + 1}/{max_retries})")
+            time.sleep(backoff)
+            retry_count += 1
+
+    # If we fall through, return the last response or raise if no response
+    if response is None:
+        raise requests.exceptions.RequestException("Max retries exceeded without response")
+    return response
 
 
 def get_issue_links(issue_data):
@@ -49,6 +112,7 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
     Fetch all worklogs for a given assignee in the last 14 days.
     Returns tuple of (worklog_issues, worklog_data_dict).
     """
+    jira_instance = jira_instance.strip()
     if not assignee_id:
         logger.warning("No valid assignee ID found, skipping worklog lookup.")
         return [], {}
@@ -73,98 +137,92 @@ def get_recent_worklogs(assignee_id, email, api_token, jira_instance):
     logger.info(f"[WORKLOGS] Making POST request to: {url}")
     logger.info(f"[WORKLOGS] JQL query: {jql_query}")
     
-    try:
-        response = requests.post(url, headers=headers, auth=auth, json=payload, timeout=30)
-        
-        worklog_data = {}
-        worklog_issues = []
-        
-        logger.info(f"[WORKLOGS] Response status: {response.status_code}")
-        if response.status_code == 200:
-            data = response.json()
-            issues = data.get("issues", [])
-            logger.info(f"[WORKLOGS] Found {len(issues)} issues with worklogs")
-            
-            # Handle pagination if needed
-            next_page_token = data.get("nextPageToken")
-            is_last = data.get("isLast", True)
-            
-            if not is_last and next_page_token:
-                logger.warning(f"[WORKLOGS] More than 1000 issues with worklogs found, only processing first 1000")
-            
-            for issue in issues:
-                issue_key = issue.get("key", "Unknown Issue")
-                project_data = issue.get("fields", {}).get(Config.CUSTOM_FIELD_RESEARCH_PROJECT, {})
-                project = (
-                    project_data.get("value", "Unknown Project")
-                    if isinstance(project_data, dict)
-                    else str(project_data)
-                )
-                
-                # Fetch worklogs separately for each issue as search API doesn't return full worklog data
-                total_time_spent = 0
-                try:
-                    worklog_url = f"https://{jira_instance}/rest/api/3/issue/{issue_key}/worklog"
-                    worklog_response = requests.get(worklog_url, headers=headers, auth=auth, timeout=30)
-                    if worklog_response.status_code == 200:
-                        worklog_data_full = worklog_response.json()
-                        all_worklogs = worklog_data_full.get("worklogs", [])
-                        
-                        # Filter worklogs from last 14 days and by the assignee
-                        cutoff_date = datetime.now() - timedelta(days=14)
-                        # Make cutoff_date timezone-aware if needed
-                        if cutoff_date.tzinfo is None:
-                            from datetime import timezone
-                            cutoff_date = cutoff_date.replace(tzinfo=timezone.utc)
-                        
-                        for wl in all_worklogs:
-                            # Check if worklog is from the assignee and within 14 days
-                            wl_author_id = wl.get("author", {}).get("accountId", "")
-                            wl_started = wl.get("started", "")
-                            
-                            if wl_author_id == assignee_id and wl_started:
-                                try:
-                                    # Parse the date - handle both Z and +00:00 formats
-                                    wl_started_clean = wl_started.replace("Z", "+00:00")
-                                    wl_date = datetime.fromisoformat(wl_started_clean)
-                                    # Ensure timezone-aware comparison
-                                    if wl_date.tzinfo is None:
-                                        from datetime import timezone
-                                        wl_date = wl_date.replace(tzinfo=timezone.utc)
-                                    
-                                    # Only count worklogs from the last 14 days
-                                    if wl_date >= cutoff_date:
-                                        total_time_spent += wl.get("timeSpentSeconds", 0) / 3600
-                                    else:
-                                        logger.debug(f"[WORKLOGS] Skipping worklog from {wl_date} (older than 14 days)")
-                                except Exception as date_error:
-                                    logger.warning(f"[WORKLOGS] Failed to parse worklog date {wl_started}: {date_error}")
-                                    # Don't include if date parsing fails - be strict about 14 days
-                except Exception as e:
-                    logger.warning(f"Failed to fetch worklogs for {issue_key}: {e}")
-                
-                if total_time_spent > 0:
-                    worklog_data[project] = worklog_data.get(project, 0) + total_time_spent
-                    
-                    worklog_issues.append({
-                        "key": issue_key,
-                        "name": issue.get("fields", {}).get("summary", "No Title"),
-                        "research_project": project,
-                        "time_spent_hours": round(total_time_spent, 2)
-                    })
-            
-            logger.info(f"[WORKLOGS] Worklogs Retrieved: {worklog_data}, Total issues: {len(worklog_issues)}")
-        else:
-            logger.error(
-                f"[WORKLOGS] Failed to fetch worklogs, Status Code: {response.status_code}, "
-                f"Response: {response.text}"
-            )
-        
-        return worklog_issues, worklog_data
+    response = _make_request(url, method="POST", headers=headers, auth=auth, json=payload)
     
-    except requests.exceptions.RequestException as e:
-        logger.error(f"[WORKLOGS] Error fetching worklogs: {e}", exc_info=True)
-        return [], {}
+    worklog_data = {}
+    worklog_issues = []
+    
+    logger.info(f"[WORKLOGS] Response status: {response.status_code}")
+    if response.status_code == 200:
+        data = response.json()
+        issues = data.get("issues", [])
+        logger.info(f"[WORKLOGS] Found {len(issues)} issues with worklogs")
+        
+        # Internal helper to fetch worklogs for an issue
+        def fetch_issue_worklogs(issue):
+            issue_key = issue.get("key", "Unknown Issue")
+            try:
+                worklog_url = f"https://{jira_instance}/rest/api/3/issue/{issue_key}/worklog"
+                wl_resp = _make_request(worklog_url, headers=headers, auth=auth)
+                if wl_resp.status_code == 200:
+                    return issue_key, wl_resp.json()
+            except Exception as e:
+                logger.warning(f"Failed to fetch worklogs for {issue_key}: {e}")
+            return issue_key, None
+
+        # Fetch worklogs in parallel
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_issue = {executor.submit(fetch_issue_worklogs, issue): issue for issue in issues}
+            
+            worklog_results = {}
+            for future in as_completed(future_to_issue):
+                issue_key, result = future.result()
+                if result:
+                    worklog_results[issue_key] = result
+
+        for issue in issues:
+            issue_key = issue.get("key", "Unknown Issue")
+            project_data = issue.get("fields", {}).get(Config.CUSTOM_FIELD_RESEARCH_PROJECT, {})
+            project = (
+                project_data.get("value", "Unknown Project")
+                if isinstance(project_data, dict)
+                else str(project_data)
+            )
+            
+            total_time_spent = 0
+            if issue_key in worklog_results:
+                data_full = worklog_results[issue_key]
+                all_worklogs = data_full.get("worklogs", [])
+                
+                cutoff_date = datetime.now() - timedelta(days=14)
+                if cutoff_date.tzinfo is None:
+                    from datetime import timezone
+                    cutoff_date = cutoff_date.replace(tzinfo=timezone.utc)
+                
+                for wl in all_worklogs:
+                    wl_author_id = wl.get("author", {}).get("accountId", "")
+                    wl_started = wl.get("started", "")
+                    
+                    if wl_author_id == assignee_id and wl_started:
+                        try:
+                            wl_started_clean = wl_started.replace("Z", "+00:00")
+                            wl_date = datetime.fromisoformat(wl_started_clean)
+                            if wl_date.tzinfo is None:
+                                from datetime import timezone
+                                wl_date = wl_date.replace(tzinfo=timezone.utc)
+                            
+                            if wl_date >= cutoff_date:
+                                total_time_spent += wl.get("timeSpentSeconds", 0) / 3600
+                        except Exception as date_error:
+                            logger.warning(f"[WORKLOGS] Failed to parse worklog date {wl_started}: {date_error}")
+            
+            if total_time_spent > 0:
+                worklog_data[project] = worklog_data.get(project, 0) + total_time_spent
+                worklog_issues.append({
+                    "key": issue_key,
+                    "name": issue.get("fields", {}).get("summary", "No Title"),
+                    "research_project": project,
+                    "time_spent_hours": round(total_time_spent, 2)
+                })
+        
+        logger.info(f"[WORKLOGS] Worklogs Retrieved: {worklog_data}, Total issues: {len(worklog_issues)}")
+    else:
+        logger.error(
+            f"[WORKLOGS] Failed to fetch worklogs, Status Code: {response.status_code}, "
+            f"Response: {response.text}"
+        )
+    
+    return worklog_issues, worklog_data
 
 
 def prepare_treemap_data(worklog_issues, time_spent_by_project):
@@ -241,112 +299,120 @@ def get_issue_hierarchy(issue_key, email, api_token, jira_instance):
     """
     Fetch a Jira issue and all its linked issues (hierarchy).
     Returns a list of issue dictionaries.
+    Uses parallel fetching for better performance.
     """
+    jira_instance = jira_instance.strip()
     auth = HTTPBasicAuth(email, api_token)
     headers = {"Accept": "application/json"}
     
     issues = []
     visited_issues = set()
-    queue = [(issue_key, "Self")]
+    # Store issues to be processed: {key: link_type}
+    to_fetch = {issue_key: "Self"}
     
-    while queue:
-        current_issue_key, link_type = queue.pop(0)
-        
-        if current_issue_key in visited_issues:
-            continue
-        visited_issues.add(current_issue_key)
-        
-        logger.debug(f"Fetching issue -> {current_issue_key}")
-        
-        try:
-            response = requests.get(
-                f"https://{jira_instance}/rest/api/3/issue/{current_issue_key}?expand=renderedFields,worklog",
-                headers=headers,
-                auth=auth,
-                timeout=30
-            )
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        while to_fetch:
+            # Prepare futures for the current batch
+            current_batch = list(to_fetch.items())
+            to_fetch = {}  # Clear for next level links
             
-            if response.status_code != 200:
-                logger.error(
-                    f"Failed to fetch issue {current_issue_key}, "
-                    f"Status Code: {response.status_code}, Response: {response.text}"
-                )
-                continue
+            futures = {}
+            for key, link_type in current_batch:
+                if key in visited_issues:
+                    continue
+                visited_issues.add(key)
+                
+                url = f"https://{jira_instance}/rest/api/3/issue/{key}?expand=renderedFields,worklog"
+                futures[executor.submit(_make_request, url, headers=headers, auth=auth)] = (key, link_type)
             
-            issue_data = response.json()
-            
-            # Extract issue fields
-            issue_name = issue_data["fields"].get("summary", "No Title")
-            raw_description = issue_data["fields"].get("description", {})
-            issue_description = extract_plain_text_from_description(raw_description)
-            
-            assignee_data = issue_data["fields"].get("assignee")
-            assignee_name = (
-                assignee_data.get("displayName", "Unassigned")
-                if assignee_data
-                else "Unassigned"
-            )
-            assignee_id = (
-                assignee_data.get("accountId", None) if assignee_data else None
-            )
-            
-            logger.debug(
-                f"Issue {current_issue_key} Assignee Name -> {assignee_name}, "
-                f"Assignee ID -> {assignee_id}"
-            )
-            
-            worklogs = issue_data["fields"].get("worklog", {}).get("worklogs", [])
-            issue_timespent = sum(
-                wl.get("timeSpentSeconds", 0) / 3600 for wl in worklogs
-            )
-            
-            logger.debug(
-                f"Issue {current_issue_key} Time Spent -> {round(issue_timespent, 2)} hours"
-            )
-            
-            research_project_field = issue_data["fields"].get(Config.CUSTOM_FIELD_RESEARCH_PROJECT)
-            research_project = (
-                research_project_field.get("value")
-                if isinstance(research_project_field, dict)
-                else "N/A"
-            )
-            
-            logger.debug(
-                f"Issue {current_issue_key} Research Project -> {research_project}"
-            )
-            
-            issues.append({
-                "key": current_issue_key,
-                "name": issue_name,
-                "description": issue_description,
-                "assignee_name": assignee_name,
-                "assignee_id": assignee_id,
-                "timespent": round(issue_timespent, 2),
-                "research_project": research_project,
-                "link_type": link_type
-            })
-            
-            # Get linked issues
-            issue_links = get_issue_links(issue_data)
-            for linked_issue in issue_links:
-                queue.append((linked_issue["key"], linked_issue["link_type"]))
-        
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching issue {current_issue_key}: {e}")
-            continue
+            # Process results as they complete
+            for future in as_completed(futures):
+                key, link_type = futures[future]
+                try:
+                    response = future.result()
+                    if response.status_code != 200:
+                        logger.error(
+                            f"Failed to fetch issue {key}, "
+                            f"Status Code: {response.status_code}, Response: {response.text}"
+                        )
+                        continue
+                    
+                    issue_data = response.json()
+                    
+                    # Extract issue fields
+                    issue_name = issue_data["fields"].get("summary", "No Title")
+                    raw_description = issue_data["fields"].get("description", {})
+                    issue_description = extract_plain_text_from_description(raw_description)
+                    
+                    assignee_data = issue_data["fields"].get("assignee")
+                    assignee_name = (
+                        assignee_data.get("displayName", "Unassigned")
+                        if assignee_data
+                        else "Unassigned"
+                    )
+                    assignee_id = (
+                        assignee_data.get("accountId", None) if assignee_data else None
+                    )
+                    
+                    logger.debug(
+                        f"Issue {key} Assignee Name -> {assignee_name}, "
+                        f"Assignee ID -> {assignee_id}"
+                    )
+                    
+                    worklogs = issue_data["fields"].get("worklog", {}).get("worklogs", [])
+                    issue_timespent = sum(
+                        wl.get("timeSpentSeconds", 0) / 3600 for wl in worklogs
+                    )
+                    
+                    logger.debug(
+                        f"Issue {key} Time Spent -> {round(issue_timespent, 2)} hours"
+                    )
+                    
+                    research_project_field = issue_data["fields"].get(Config.CUSTOM_FIELD_RESEARCH_PROJECT)
+                    research_project = (
+                        research_project_field.get("value")
+                        if isinstance(research_project_field, dict)
+                        else "N/A"
+                    )
+                    
+                    logger.debug(
+                        f"Issue {key} Research Project -> {research_project}"
+                    )
+                    
+                    issues.append({
+                        "key": key,
+                        "name": issue_name,
+                        "description": issue_description,
+                        "assignee_name": assignee_name,
+                        "assignee_id": assignee_id,
+                        "timespent": round(issue_timespent, 2),
+                        "research_project": research_project,
+                        "link_type": link_type
+                    })
+                    
+                    # Get linked issues for the next level
+                    issue_links = get_issue_links(issue_data)
+                    for linked_issue in issue_links:
+                        l_key = linked_issue["key"]
+                        if l_key not in visited_issues:
+                            to_fetch[l_key] = linked_issue["link_type"]
+                            
+                except Exception as e:
+                    logger.error(f"Error processing issue {key}: {e}")
     
-    logger.debug("Completed issue hierarchy retrieval")
+    logger.debug(f"Completed issue hierarchy retrieval (Total issues: {len(issues)})")
     return issues
 
 
 def get_jql_from_filter(filter_id, email, api_token, jira_instance):
     """Get the JQL query from a saved Jira filter by filter ID."""
+    jira_instance = jira_instance.strip()
     filter_url = f"https://{jira_instance}/rest/api/3/filter/{filter_id}"
     auth = HTTPBasicAuth(email, api_token)
     headers = {"Accept": "application/json"}
     
     try:
-        response = requests.get(filter_url, headers=headers, auth=auth, timeout=30)
+        response = _make_request(filter_url, headers=headers, auth=auth)
         
         if response.status_code == 200:
             return response.json().get("jql")
@@ -370,6 +436,7 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance, exclude_i
     Args:
         exclude_issue_key: Optional issue key to exclude from results (for getting next issue)
     """
+    jira_instance = jira_instance.strip()
     logger.info(f"[SEARCH] Starting search_issue_by_filter with filter_id={filter_id}, exclude_issue_key={exclude_issue_key}")
     jql = get_jql_from_filter(filter_id, email, api_token, jira_instance)
     
@@ -404,12 +471,12 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance, exclude_i
     logger.info(f"[SEARCH] Making POST request to search URL: {search_url} with maxResults={fetch_count}")
     
     try:
-        response = requests.post(
+        response = _make_request(
             search_url,
+            method="POST",
             headers=headers,
             auth=auth,
-            json=payload,
-            timeout=30
+            json=payload
         )
         
         logger.info(f"[SEARCH] POST response status: {response.status_code}")
@@ -438,12 +505,12 @@ def search_issue_by_filter(filter_id, email, api_token, jira_instance, exclude_i
                 "maxResults": max_results,
                 "fields": ["key"]
             }
-            check_response = requests.post(
+            check_response = _make_request(
                 search_url,
+                method="POST",
                 headers=headers,
                 auth=auth,
-                json=check_payload,
-                timeout=30
+                json=check_payload
             )
             
             if check_response.status_code == 200:
@@ -508,6 +575,7 @@ def update_issue(issue_key, research_project, chargeable, email, api_token, jira
     Update a Jira issue with research project and chargeable status.
     Returns tuple of (success: bool, response_data: dict).
     """
+    jira_instance = jira_instance.strip()
     update_data = {
         "fields": {
             Config.CUSTOM_FIELD_RESEARCH_PROJECT: {"value": research_project}
@@ -526,7 +594,7 @@ def update_issue(issue_key, research_project, chargeable, email, api_token, jira
     }
     
     try:
-        response = requests.put(url, json=update_data, auth=auth, headers=headers, timeout=30)
+        response = _make_request(url, method="PUT", json=update_data, auth=auth, headers=headers)
         
         if response.status_code == 204:
             return True, {"message": "Issue updated successfully"}
@@ -552,13 +620,14 @@ def update_issue(issue_key, research_project, chargeable, email, api_token, jira
 
 def add_watcher(issue_key, email, api_token, jira_instance):
     """Add the current user as a watcher to a Jira issue."""
+    jira_instance = jira_instance.strip()
     auth = HTTPBasicAuth(email, api_token)
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
     
     try:
         # First, get the user's accountId
         user_url = f"https://{jira_instance}/rest/api/3/myself"
-        user_response = requests.get(user_url, headers=headers, auth=auth, timeout=30)
+        user_response = _make_request(user_url, headers=headers, auth=auth)
         
         if user_response.status_code != 200:
             logger.warning(f"Failed to get user info: {user_response.status_code}")
@@ -571,12 +640,12 @@ def add_watcher(issue_key, email, api_token, jira_instance):
         
         # Add watcher using accountId
         watcher_url = f"https://{jira_instance}/rest/api/3/issue/{issue_key}/watchers"
-        watcher_response = requests.post(
+        watcher_response = _make_request(
             watcher_url,
+            method="POST",
             json=account_id,  # Jira API expects accountId as JSON
             auth=auth,
-            headers=headers,
-            timeout=30
+            headers=headers
         )
         
         if watcher_response.status_code not in [204, 400]:
